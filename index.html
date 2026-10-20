@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#00695C">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Magazzino Facile</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; font-family: Arial, sans-serif; }
+  body { margin:0; background:#f5f5f5; }
+  header { display:flex; align-items:center; justify-content:space-between; background:#00695C; color:#fff; padding:10px; position:sticky; top:0; z-index:10; }
+  header button { background:#fff; color:#00695C; border:none; padding:10px 14px; font-size:16px; border-radius:8px; font-weight:bold; }
+  header .title { font-size:20px; font-weight:bold; }
+  .view { padding:12px; padding-bottom:80px; }
+  button.big { width:100%; min-height:60px; font-size:20px; border:none; border-radius:10px; margin-top:10px; font-weight:bold; }
+  .btn-primary{ background:#00695C; color:#fff; }
+  .btn-orange{ background:#E65100; color:#fff; }
+  .btn-red{ background:#B71C1C; color:#fff; }
+  .btn-dark{ background:#880E4F; color:#fff; }
+  .row { display:flex; gap:8px; }
+  .row button { flex:1; }
+  input { width:100%; font-size:20px; padding:12px; margin-top:6px; border:2px solid #00695C; border-radius:8px; }
+  label { font-size:16px; font-weight:bold; margin-top:12px; display:block; }
+  #camera { width:100%; min-height:280px; background:#000; border-radius:10px; overflow:hidden; margin-top:8px; }
+  .card { border-radius:12px; padding:14px; margin-top:10px; display:flex; gap:12px; align-items:center; }
+  .card.pending { background:#E0F7FA; }
+  .card.done { background:#1B5E20; color:#fff; }
+  .card img { width:130px; height:130px; object-fit:contain; background:#fff; border-radius:8px; }
+  .name { font-size:24px; font-weight:bold; }
+  .desc { font-size:16px; }
+  .count { font-size:60px; font-weight:bold; line-height:1; }
+  .msg { padding:10px 12px; font-size:18px; font-weight:bold; min-height:20px; }
+  .err { color:#B71C1C; }
+  .swatch { display:inline-block; width:28px; height:28px; border-radius:6px; vertical-align:middle; margin:0 8px; border:1px solid #999; }
+  nav { position:fixed; bottom:0; left:0; right:0; display:flex; background:#004D40; }
+  nav button { flex:1; background:transparent; color:#fff; border:none; padding:16px; font-size:16px; font-weight:bold; }
+  nav button.active { background:#00695C; }
+  .hidden { display:none !important; }
+  .colitem { display:flex; align-items:center; padding:10px; font-size:18px; background:#fff; border-radius:8px; margin-top:6px; }
+  .colitem.sel { outline:4px solid #00695C; font-weight:bold; }
+  dialog { border:none; border-radius:12px; padding:20px; width:90%; max-width:400px; }
+  dialog::backdrop { background:rgba(0,0,0,0.5); }
+</style>
+</head>
+<body>
+
+<header>
+  <button id="authBtn">LOGIN</button>
+  <div class="title" id="roleTitle">Magazziniere</div>
+  <button id="settingsBtn">IMPOSTAZIONI</button>
+</header>
+
+<div id="msg" class="msg"></div>
+
+<!-- SCANNER -->
+<div id="viewScanner" class="view">
+  <div id="colIndicator" style="font-size:22px; font-weight:bold;"></div>
+  <div id="camera"></div>
+  <div id="productCard" class="card pending hidden">
+    <img id="pPhoto" alt="">
+    <div>
+      <div class="name" id="pName"></div>
+      <div class="desc" id="pDesc"></div>
+      <div class="count" id="pCount"></div>
+      <div id="pLabel" style="font-size:18px; font-weight:bold;"></div>
+    </div>
+  </div>
+  <button class="big btn-orange" id="undoBtn">&#8617; INDIETRO (annulla ultima scansione)</button>
+  <button class="big btn-red hidden" id="resetColBtn">RICOMINCIA COLONNA DA ZERO</button>
+  <button class="big btn-dark hidden" id="resetAllBtn">AZZERA TUTTI I CONTEGGI</button>
+</div>
+
+<!-- GESTORE -->
+<div id="viewGestore" class="view hidden">
+  <h2>Aggiungi / modifica prodotto</h2>
+  <label>Codice a barre</label><input id="fBarcode">
+  <label>Nome prodotto</label><input id="fName">
+  <label>Descrizione</label><input id="fDesc">
+  <label>Quantità (nella colonna attiva)</label><input id="fQty" type="number" inputmode="numeric">
+  <label>Foto prodotto (dalla galleria o fotocamera)</label><input id="fPhoto" type="file" accept="image/*">
+  <button class="big btn-primary" id="saveProductBtn">SALVA NEL FOGLIO</button>
+  <h2>Scegli la colonna countdown</h2>
+  <p>Tocca una colonna per attivarla (K, L, M, N, O...):</p>
+  <div id="colList"></div>
+</div>
+
+<!-- IMPOSTAZIONI -->
+<div id="viewSettings" class="view hidden">
+  <h2>Impostazioni</h2>
+  <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
+  <label>Token segreto (la password dello script)</label><input id="sToken">
+  <label>ID foglio Google</label><input id="sSheet">
+  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
+  <div id="gestoreSettings" class="hidden">
+    <label>Colonna codice a barre</label><input id="sBarcodeCol">
+    <label>Colonna nome prodotto</label><input id="sNameCol">
+    <label>Colonna descrizione</label><input id="sDescCol">
+    <label>Colonna foto (URL)</label><input id="sPhotoCol">
+    <label>Colonna quantità attiva</label><input id="sQtyCol">
+  </div>
+  <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
+  <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
+</div>
+
+<nav id="bottomNav" class="hidden">
+  <button data-view="viewScanner" class="active">SCANNER</button>
+  <button data-view="viewGestore">GESTIONE</button>
+  <button data-view="viewSettings">IMPOSTAZIONI</button>
+</nav>
+
+<dialog id="loginDialog">
+  <h2>Login Gestore</h2>
+  <label>User ID</label><input id="loginUser" value="Gestore">
+  <label>Password</label><input id="loginPass" type="password">
+  <div class="row">
+    <button class="big btn-primary" id="doLoginBtn">ACCEDI</button>
+    <button class="big" id="cancelLoginBtn">ANNULLA</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
+  barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+
+let settings = loadSettings();
+let role = localStorage.getItem('role') || 'MAGAZZINIERE';
+let columnsMeta = [];
+let currentProduct = null;
+let historyStack = [];
+let lastScan = { code:null, time:0 };
+let scanner = null;
+
+function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
+function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
+
+function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
+function beep(long){ try{
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.connect(g); g.connect(ctx.destination); o.type='sine';
+  o.frequency.value = long?880:660;
+  g.gain.setValueAtTime(0.3, ctx.currentTime);
+  o.start(); o.stop(ctx.currentTime+(long?0.5:0.15));
+}catch(e){} }
+function vibrate(long){ if(navigator.vibrate) navigator.vibrate(long?[300,100,300]:150); }
+function showMsg(t,isErr){ const m=$('msg'); m.textContent=t||''; m.className='msg'+(isErr?' err':''); }
+
+/* --- CHIAMATE AL GOOGLE APPS SCRIPT --- */
+function commonParams(){ return { token:settings.token, spreadsheetId:settings.spreadsheetId, sheetName:settings.sheetName,
+  barcodeColumn:settings.barcodeColumn, nameColumn:settings.nameColumn, descColumn:settings.descColumn,
+  photoColumn:settings.photoColumn, qtyColumn:settings.activeQtyColumn }; }
+
+function apiGet(params){
+  const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
+  const sep = settings.scriptUrl.includes('?') ? '&' : '?';
+  return fetch(settings.scriptUrl + sep + q).then(r=>r.json());
+}
+
+function loadMeta(){
+  if(!settings.scriptUrl){ showMsg('Vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
+  apiGet(Object.assign({action:'meta'}, commonParams()))
+    .then(res=>{ if(res.ok){ columnsMeta=res.columns||[]; renderColIndicator(); renderColList(); } else showMsg(res.error,true); })
+    .catch(e=>showMsg('Errore collegamento: '+e.message,true));
+}
+
+/* --- SCANNER --- */
+function startScanner(){
+  if(scanner) return;
+  if(typeof Html5Qrcode==='undefined'){ showMsg('Libreria scanner non caricata: serve connessione internet.',true); return; }
+  let formats;
+  try{ formats=[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,
+    Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.QR_CODE]; }catch(e){ formats=undefined; }
+  scanner = formats ? new Html5Qrcode('camera',{formatsToSupport:formats}) : new Html5Qrcode('camera');
+  scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:160}},onScan,()=>{})
+    .catch(err=>{ showMsg('Fotocamera non disponibile: '+err,true); scanner=null; });
+}
+function stopScanner(){ if(scanner){ const s=scanner; scanner=null; s.stop().then(()=>s.clear()).catch(()=>{}); } }
+
+function onScan(code){
+  const now=Date.now();
+  if(code===lastScan.code && now-lastScan.time<1500) return;
+  lastScan={code,time:now};
+  handleBarcode(code);
+}
+
+function handleBarcode(code){
+  showMsg('Ricerca: '+code+' ...');
+  apiGet(Object.assign({action:'getProduct',barcode:code},commonParams()))
+    .then(res=>{
+      if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
+      if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
+      const p=res.product; currentProduct=p;
+      if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
+      const key='count_'+p.barcode+'_'+p.qtyColumn;
+      const stored=localStorage.getItem(key);
+      const before = stored===null ? p.quantity : parseInt(stored);
+      const remaining=Math.max(before-1,0);
+      localStorage.setItem(key,String(remaining));
+      historyStack.push({key:key,before:before});
+      renderProduct(p,remaining);
+      if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
+      else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
+    })
+    .catch(e=>{ showMsg('Errore: '+e.message,true); speak('Errore di collegamento'); });
+}
+
+function renderProduct(p,remaining){
+  const done = remaining<=0 && p.quantity>0;
+  $('productCard').className='card '+(done?'done':'pending');
+  $('pName').textContent=p.name||'Prodotto';
+  $('pDesc').textContent=p.description||'';
+  $('pCount').textContent=done?'FATTO!':remaining;
+  $('pLabel').textContent=done?'PRODOTTO FINITO':'PEZZI RIMANENTI';
+  if(p.photoUrl){ $('pPhoto').src=p.photoUrl; $('pPhoto').style.display='block'; }
+  else $('pPhoto').style.display='none';
+}
+
+/* --- PULSANTI --- */
+$('undoBtn').onclick=()=>{
+  if(!historyStack.length){ showMsg('Niente da annullare'); speak('Niente da annullare'); return; }
+  const last=historyStack.pop();
+  localStorage.setItem(last.key,String(last.before));
+  showMsg('Annullato. Riportato a '+last.before); speak('Annullato, mancano '+last.before);
+  if(currentProduct) renderProduct(currentProduct,last.before);
+};
+$('resetColBtn').onclick=()=>{
+  if(!confirm('Ricominciare TUTTA la colonna '+settings.activeQtyColumn+' da zero?')) return;
+  const col=settings.activeQtyColumn;
+  Object.keys(localStorage).filter(k=>k.startsWith('count_')&&k.endsWith('_'+col)).forEach(k=>localStorage.removeItem(k));
+  historyStack=[]; $('productCard').className='card pending hidden';
+  showMsg('Colonna '+col+' azzerata'); speak('Colonna azzerata');
+};
+$('resetAllBtn').onclick=()=>{
+  if(!confirm('Azzerare TUTTI i conteggi di TUTTE le colonne?')) return;
+  Object.keys(localStorage).filter(k=>k.startsWith('count_')).forEach(k=>localStorage.removeItem(k));
+  historyStack=[]; $('productCard').className='card pending hidden';
+  showMsg('Tutti i conteggi azzerati'); speak('Tutti i conteggi azzerati');
+};
+
+/* --- RUOLI --- */
+function applyRole(){
+  const isG = role==='GESTORE';
+  $('roleTitle').textContent = isG?'Gestore':'Magazziniere';
+  $('authBtn').textContent = isG?'LOGOUT':'LOGIN';
+  $('bottomNav').classList.toggle('hidden',!isG);
+  $('resetColBtn').classList.toggle('hidden',!isG);
+  $('resetAllBtn').classList.toggle('hidden',!isG);
+  $('gestoreSettings').classList.toggle('hidden',!isG);
+  if(!isG) showView('viewScanner');
+}
+$('authBtn').onclick=()=>{
+  if(role==='GESTORE'){ role='MAGAZZINIERE'; localStorage.setItem('role',role); applyRole(); speak('Modalità magazziniere'); }
+  else { $('loginPass').value=''; $('loginDialog').showModal(); }
+};
+$('doLoginBtn').onclick=()=>{
+  if($('loginUser').value.trim()==='Gestore' && $('loginPass').value==='Cecap'){
+    role='GESTORE'; localStorage.setItem('role',role); $('loginDialog').close(); applyRole(); speak('Accesso gestore eseguito');
+  } else { showMsg('Credenziali non valide',true); speak('Credenziali non valide'); }
+};
+$('cancelLoginBtn').onclick=()=>$('loginDialog').close();
+
+/* --- VISTE --- */
+function showView(id){
+  ['viewScanner','viewGestore','viewSettings'].forEach(v=>$(v).classList.toggle('hidden',v!==id));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===id));
+  if(id==='viewScanner') startScanner(); else stopScanner();
+}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+$('settingsBtn').onclick=()=>showView('viewSettings');
+$('backToScannerBtn').onclick=()=>showView('viewScanner');
+
+/* --- COLONNE --- */
+function renderColIndicator(){
+  const col=columnsMeta.find(c=>c.letter===settings.activeQtyColumn);
+  $('colIndicator').innerHTML='COLONNA: '+settings.activeQtyColumn+
+    (col? ' <span class="swatch" style="background:'+col.color+'"></span> '+col.header : '');
+}
+function renderColList(){
+  const c=$('colList'); c.innerHTML='';
+  if(!columnsMeta.length){ c.innerHTML='<p>Nessuna colonna caricata. Controlla le impostazioni.</p>'; return; }
+  columnsMeta.forEach(col=>{
+    const div=document.createElement('div');
+    div.className='colitem'+(col.letter===settings.activeQtyColumn?' sel':'');
+    div.innerHTML='<span class="swatch" style="background:'+col.color+'"></span><b>'+col.letter+'</b>&nbsp;-&nbsp;'+(col.header||'(senza nome)');
+    div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList();
+      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
+    c.appendChild(div);
+  });
+}
+
+/* --- IMPOSTAZIONI --- */
+function fillSettingsForm(){
+  $('sUrl').value=settings.scriptUrl; $('sToken').value=settings.token;
+  $('sSheet').value=settings.spreadsheetId; $('sTab').value=settings.sheetName;
+  $('sBarcodeCol').value=settings.barcodeColumn; $('sNameCol').value=settings.nameColumn;
+  $('sDescCol').value=settings.descColumn; $('sPhotoCol').value=settings.photoColumn;
+  $('sQtyCol').value=settings.activeQtyColumn;
+}
+$('saveSettingsBtn').onclick=()=>{
+  settings.scriptUrl=$('sUrl').value.trim();
+  settings.token=$('sToken').value.trim();
+  settings.spreadsheetId=$('sSheet').value.trim();
+  settings.sheetName=$('sTab').value.trim();
+  if(role==='GESTORE'){
+    settings.barcodeColumn=$('sBarcodeCol').value.trim().toUpperCase()||'E';
+    settings.nameColumn=$('sNameCol').value.trim().toUpperCase()||'C';
+    settings.descColumn=$('sDescCol').value.trim().toUpperCase()||'F';
+    settings.photoColumn=$('sPhotoCol').value.trim().toUpperCase()||'P';
+    settings.activeQtyColumn=$('sQtyCol').value.trim().toUpperCase()||'K';
+  }
+  saveSettings(); showMsg('Impostazioni salvate'); loadMeta(); showView('viewScanner');
+};
+
+/* --- SALVATAGGIO PRODOTTO (GESTORE) --- */
+function fileToBase64(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); }); }
+$('saveProductBtn').onclick=async ()=>{
+  if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
+  const payload=Object.assign({action:'updateProduct'},commonParams(),{
+    barcode:$('fBarcode').value.trim(), name:$('fName').value, description:$('fDesc').value,
+    quantity:parseInt($('fQty').value)||0 });
+  const file=$('fPhoto').files[0];
+  if(file){
+    if(file.size>4*1024*1024){ showMsg('Foto troppo grande (max 4 MB)',true); return; }
+    const b64=await fileToBase64(file);
+    payload.photoBase64=b64.split(',')[1]; payload.photoMime=file.type; payload.photoName=file.name;
+  }
+  showMsg('Salvataggio in corso...');
+  try{
+    const res=await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+    const txt=await res.text();
+    let ok=false; try{ ok=JSON.parse(txt).ok; }catch(e){ ok=res.ok; }
+    showMsg(ok?'Articolo salvato nel foglio ✔':'Errore nel salvataggio: '+txt,!ok);
+    if(ok) speak('Articolo salvato');
+  }catch(e){ showMsg('Errore: '+e.message,true); }
+};
+
+/* --- AVVIO --- */
+document.body.addEventListener('touchend',function once(){
+  try{ new (window.AudioContext||window.webkitAudioContext)().resume(); }catch(e){}
+  if('wakeLock' in navigator){ navigator.wakeLock.request('screen').catch(()=>{}); }
+},{once:true});
+
+fillSettingsForm();
+applyRole();
+renderColIndicator();
+loadMeta();
+if(!settings.scriptUrl) showView('viewSettings');
+</script>
+</body>
+</html>
