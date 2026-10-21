@@ -292,6 +292,7 @@ function applyRole(){
   const isG = role==='GESTORE';
   $('roleTitle').textContent = isG?'Gestore':'Magazziniere';
   $('authBtn').textContent = isG?'LOGOUT':'LOGIN';
+  $('settingsBtn').style.display = isG ? 'inline-block' : 'none';
   $('bottomNav').classList.toggle('hidden',!isG);
   $('resetColBtn').classList.toggle('hidden',!isG);
   $('resetAllBtn').classList.toggle('hidden',!isG);
@@ -400,7 +401,8 @@ fillSettingsForm();
 applyRole();
 renderColIndicator();
 loadMeta();
-if(!settings.scriptUrl) showView('viewSettings');
+if(!settings.scriptUrl && role==='GESTORE') showView('viewSettings');
+if(!settings.scriptUrl && role!=='GESTORE') showView('viewScanner');
 </script>
 </body>
 </html>
