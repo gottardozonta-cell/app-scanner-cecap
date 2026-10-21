@@ -122,7 +122,7 @@
     <button class="big btn-primary" id="startSelectedColumnBtn">AVVIA COLONNA</button>
     <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
     <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
-    <div style="text-align:center; opacity:.55; margin-top:24px; font-size:14px;">Magazzino Facile v2.3</div>
+    <div style="text-align:center; opacity:.55; margin-top:24px; font-size:14px;">Magazzino Facile v2.4</div>
   </div>
 
   <nav id="bottomNav" class="hidden">
@@ -380,6 +380,30 @@
       return Number.isFinite(parsed) ? parsed : 0;
     }
 
+    // Riconosce valori "tipo codice a barre": numerici EAN/UPC/ITF oppure
+    // alfanumerici che contengono almeno una cifra (Code39 ecc.). Esclude i nomi
+    // puramente testuali come "Martello".
+    function looksLikeBarcode(v) {
+      const t = String(v ?? '').trim();
+      if (!t) return false;
+      if (/^\d{6,15}$/.test(t)) return true;
+      return /^(?=.*\d)[A-Z0-9][A-Z0-9.\-]{5,24}$/i.test(t);
+    }
+
+    // Trova la colonna con più valori "tipo barcode" (escludendo quantità/nome/desc/foto)
+    function detectBarcodeIndex(rows, headers, excludeIdx) {
+      const excluded = new Set((excludeIdx || []).filter(i => i >= 0));
+      let best = -1;
+      let bestScore = 0;
+      for (let i = 0; i < headers.length; i++) {
+        if (excluded.has(i)) continue;
+        let score = 0;
+        rows.forEach(r => { if (looksLikeBarcode(r[i])) score++; });
+        if (score > bestScore) { bestScore = score; best = i; }
+      }
+      return bestScore >= 2 ? best : -1;
+    }
+
     function buildColumnsMeta(headers) {
       const palette = ['#4CAF50', '#FF9800', '#2196F3', '#9C27B0', '#E91E63', '#00BCD4', '#795548', '#607D8B'];
       return headers.map((header, index) => ({
@@ -411,12 +435,18 @@
         headers.forEach((h, i) => {
           let nonEmpty = 0;
           let nums = 0;
+          let bclike = 0;
           rows.forEach(r => {
             if (!isBlankCell(r[i])) nonEmpty++;
             if (toNumber(r[i]) > 0) nums++;
+            if (looksLikeBarcode(r[i])) bclike++;
           });
-          if (nonEmpty > 0) lines.push('Col. ' + columnLetterFromIndex(i) + ' "' + h + '": celle piene=' + nonEmpty + ' | numeri>0=' + nums);
+          if (nonEmpty > 0) lines.push('Col. ' + columnLetterFromIndex(i) + ' "' + h + '": celle piene=' + nonEmpty + ' | numeri>0=' + nums + ' | tipoBarcode=' + bclike);
         });
+        const suggested = detectBarcodeIndex(rows, headers, [qtyIndex, nameIndex, descIndex, photoIndex]);
+        lines.push('Colonna codici suggerita: ' + (suggested >= 0
+          ? columnLetterFromIndex(suggested) + (suggested === barcodeIndex ? ' (gia configurata)' : ' (configurata ora: ' + params.barcodeColumn + ')')
+          : 'nessuna rilevata (configurata: ' + params.barcodeColumn + ')'));
         [['barcode', barcodeIndex], ['quantita', qtyIndex]].forEach(pair => {
           if (pair[1] >= 0 && pair[1] < headers.length) {
             const samples = rows.slice(0, 3).map(r => '"' + String(r[pair[1]] ?? '') + '"').join(', ');
@@ -426,27 +456,43 @@
         return { ok: true, report: lines.join('\n') };
       }
 
-      if (barcodeIndex < 0) return { ok: false, error: 'Colonna codice a barre "' + params.barcodeColumn + '" non trovata.' };
-      if (barcodeIndex >= headers.length) return { ok: false, error: 'La colonna codice a barre ' + params.barcodeColumn + ' non esiste nel foglio (ultima disponibile: ' + lastCol + ').' };
       if (qtyIndex < 0) return { ok: false, error: 'Colonna quantità "' + params.qtyColumn + '" non trovata nel foglio.' };
       if (qtyIndex >= headers.length) return { ok: false, error: 'La colonna quantità ' + params.qtyColumn + ' non esiste nel foglio: l\'ultima colonna disponibile è ' + lastCol + '. Verifica scheda (gid) e foglio corretti.' };
 
       const cell = (row, i) => (i >= 0 && i < row.length ? row[i] : '');
+
+      // Se la colonna codice a barre configurata è vuota o inesistente, la rileva automaticamente
+      let usedBarcodeIndex = barcodeIndex;
+      let autoBarcodeCol = null;
+      const barcodeMissing = barcodeIndex < 0 || barcodeIndex >= headers.length ||
+        !rows.some(r => String(cell(r, barcodeIndex) ?? '').trim() !== '');
+      if (barcodeMissing && (params.action === 'getProduct' || params.action === 'listProductsForColumn')) {
+        const detected = detectBarcodeIndex(rows, headers, [qtyIndex, nameIndex, descIndex, photoIndex]);
+        if (detected >= 0) {
+          usedBarcodeIndex = detected;
+          autoBarcodeCol = columnLetterFromIndex(detected);
+        }
+      }
+      if (usedBarcodeIndex < 0 || usedBarcodeIndex >= headers.length) {
+        return { ok: false, error: 'Colonna codice a barre "' + params.barcodeColumn + '" vuota o inesistente: indica la lettera corretta in IMPOSTAZIONI (ultima colonna: ' + lastCol + ').' };
+      }
+
       const makeProduct = (row, rowIndex) => ({
-        barcode: String(cell(row, barcodeIndex) || '').trim(),
+        barcode: String(cell(row, usedBarcodeIndex) || '').trim(),
         name: String(cell(row, nameIndex) || ''),
         description: String(cell(row, descIndex) || ''),
         photoUrl: String(cell(row, photoIndex) || ''),
         quantity: toNumber(cell(row, qtyIndex)),
         qtyColumn: normalizeColumnSpec(params.qtyColumn),
+        barcodeColumn: autoBarcodeCol || normalizeColumnSpec(params.barcodeColumn),
         rowIndex
       });
 
       if (params.action === 'getProduct') {
         const targetCode = String(params.barcode || '').trim();
-        const idx = rows.findIndex(r => String(cell(r, barcodeIndex) || '').trim() === targetCode);
+        const idx = rows.findIndex(r => String(cell(r, usedBarcodeIndex) || '').trim() === targetCode);
         if (idx < 0) return { ok: true, product: null };
-        return { ok: true, product: makeProduct(rows[idx], idx) };
+        return { ok: true, product: makeProduct(rows[idx], idx), autoBarcodeCol };
       }
 
       if (params.action === 'listProductsForColumn') {
@@ -460,7 +506,7 @@
           if (!p.barcode || p.quantity <= 0) return;
           products.push(p);
         });
-        return { ok: true, products, stats: { rows: rows.length, withBarcode, withQty } };
+        return { ok: true, products, autoBarcodeCol, stats: { rows: rows.length, withBarcode, withQty } };
       }
 
       return { ok: false, error: 'Azione non supportata.' };
@@ -854,16 +900,24 @@
           .filter(p => Number(p.quantity) > 0)
           .map(p => ({ ...p }));
 
+        // Se la colonna codici è stata rilevata automaticamente, la salva e lo segnala
+        let autoNote = '';
+        if (res.autoBarcodeCol && res.autoBarcodeCol !== settings.barcodeColumn) {
+          autoNote = 'Colonna codici rilevata automaticamente: ' + res.autoBarcodeCol + '. ';
+          settings.barcodeColumn = res.autoBarcodeCol;
+          saveSettings();
+        }
+
         if (!items.length) {
           autoQueue = [];
           autoIndex = 0;
           autoMode = false;
           renderQueueList();
           const st = res.stats || { rows: 0, withBarcode: 0, withQty: 0 };
-          showMsg('Nessun prodotto valido nella colonna ' + settings.activeQtyColumn +
+          showMsg(autoNote + 'Nessun prodotto valido nella colonna ' + settings.activeQtyColumn +
             ' | Sorgente: ' + (settings.sourceType === 'local' ? 'FILE LOCALE' : 'FOGLIO GOOGLE') +
             ' | Righe lette: ' + st.rows +
-            ' | barcode in col. ' + settings.barcodeColumn + ': ' + st.withBarcode +
+            ' | barcode in col. ' + (res.autoBarcodeCol || settings.barcodeColumn) + ': ' + st.withBarcode +
             ' | quantità > 0 in col. ' + settings.activeQtyColumn + ': ' + st.withQty +
             '. Controlla sorgente e colonne in IMPOSTAZIONI.', true);
           return;
@@ -874,7 +928,7 @@
         autoMode = true;
         renderQueueList();
         showNextAutoProduct();
-        showMsg('Colonna ' + settings.activeQtyColumn + ' avviata. Inquadra il codice del prodotto corrente.', false);
+        showMsg(autoNote + 'Colonna ' + settings.activeQtyColumn + ' avviata. Inquadra il codice del prodotto corrente.', false);
       } catch (e) {
         autoQueue = [];
         autoIndex = 0;
