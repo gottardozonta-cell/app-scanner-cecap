@@ -132,6 +132,8 @@ let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
 let driveDataCache = [];
+let queuedProducts = [];
+let totalLoadPieces = 0;
 
 function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
@@ -249,12 +251,16 @@ function buildColumnsMetaFromRows(rows){
 async function loadDriveSheetData(){
   if(!settings.driveLink){
     driveDataCache = [];
+    queuedProducts = [];
+    totalLoadPieces = 0;
     return [];
   }
 
   const exportUrl = normalizeGoogleSheetUrl(settings.driveLink);
   if(!exportUrl){
     driveDataCache = [];
+    queuedProducts = [];
+    totalLoadPieces = 0;
     throw new Error('Link Google Drive non valido. Usa il link del foglio condiviso.');
   }
 
@@ -263,13 +269,62 @@ async function loadDriveSheetData(){
   const csv = await res.text();
   const rows = parseCsv(csv);
   driveDataCache = rows;
+  buildQueuedProducts();
   return rows;
+}
+
+function buildQueuedProducts(){
+  queuedProducts = [];
+  totalLoadPieces = 0;
+  if(!driveDataCache.length) return [];
+
+  const qtyIndex = colToIndex(settings.activeQtyColumn);
+  const barcodeIndex = colToIndex(settings.barcodeColumn);
+  const nameIndex = colToIndex(settings.nameColumn);
+  const descIndex = colToIndex(settings.descColumn);
+  const photoIndex = colToIndex(settings.photoColumn);
+
+  for(let i=1;i<driveDataCache.length;i++){
+    const row = driveDataCache[i];
+    const qty = parseInt(String(row[qtyIndex] || '0').replace(/[^0-9-]/g,''),10) || 0;
+    if(qty <= 0) continue;
+
+    const barcode = String(row[barcodeIndex] || '').trim();
+    if(!barcode) continue;
+
+    const item = {
+      barcode,
+      name:String(row[nameIndex] || '').trim() || 'Prodotto',
+      description:String(row[descIndex] || '').trim(),
+      photoUrl:String(row[photoIndex] || '').trim(),
+      quantity:qty,
+      qtyColumn:settings.activeQtyColumn
+    };
+    queuedProducts.push(item);
+    totalLoadPieces += qty;
+  }
+
+  if(queuedProducts.length){
+    currentProduct = queuedProducts[0];
+    renderProduct(currentProduct, currentProduct.quantity);
+    showMsg('PROSSIMO: '+currentProduct.name+' - '+currentProduct.quantity+' da scannerizzare');
+  } else {
+    currentProduct = null;
+    $('productCard').className='card done';
+    $('pName').textContent='FINE CARICO';
+    $('pDesc').textContent='Nessun articolo da caricare';
+    $('pCount').textContent='0';
+    $('pLabel').textContent='ARTICOLI';
+    $('pPhoto').style.display='none';
+    showMsg('FINE CARICO - 0 pezzi');
+  }
+
+  return queuedProducts;
 }
 
 function findProductInDriveData(barcode){
   if(!driveDataCache.length) return null;
 
-  const header = driveDataCache[0].map(cell => (cell || '').trim());
   const barcodeIndex = colToIndex(settings.barcodeColumn);
   const nameIndex = colToIndex(settings.nameColumn);
   const descIndex = colToIndex(settings.descColumn);
@@ -382,21 +437,67 @@ async function handleBarcode(code){
   showMsg('Ricerca: '+code+' ...');
 
   try {
+    if(settings.driveLink && queuedProducts.length){
+      const current = queuedProducts[0];
+      const scanned = String(code).trim().toLowerCase();
+      const expected = String(current.barcode).trim().toLowerCase();
+
+      if(scanned !== expected){
+        showMsg('Prodotto non previsto. Attendere: '+current.name,true);
+        speak('Prodotto non previsto');
+        beep(true);
+        return;
+      }
+
+      const before = current.quantity;
+      current.quantity = Math.max(before - 1, 0);
+
+      if(current.quantity > 0){
+        renderProduct(current, current.quantity);
+        showMsg('Mancano '+current.quantity+' pezzi di '+current.name,false);
+        speak('Mancano '+current.quantity);
+        beep(false);
+        return;
+      }
+
+      queuedProducts.shift();
+      if(queuedProducts.length){
+        const next = queuedProducts[0];
+        currentProduct = next;
+        renderProduct(next, next.quantity);
+        showMsg('PROSSIMO: '+next.name+' - '+next.quantity+' da scannerizzare',false);
+        speak('Prossimo prodotto');
+        beep(false);
+        return;
+      }
+
+      currentProduct = null;
+      $('productCard').className='card done';
+      $('pName').textContent='FINE CARICO';
+      $('pDesc').textContent='Tutti i pezzi sono stati completati';
+      $('pCount').textContent=totalLoadPieces;
+      $('pLabel').textContent='PEZZI COMPLETATI';
+      $('pPhoto').style.display='none';
+      showMsg('FINE CARICO - '+totalLoadPieces+' pezzi',false);
+      speak('Fine carico');
+      beep(true);
+      vibrate(true);
+      return;
+    }
+
     if(settings.driveLink){
       const product = findProductInDriveData(code);
       if(!product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
       currentProduct = product;
-      const before = product.quantity;
-      const remaining = Math.max(before - 1, 0);
-      const key='count_'+product.barcode+'_'+product.qtyColumn;
-      const stored=localStorage.getItem(key);
+      const storedKey='count_'+product.barcode+'_'+product.qtyColumn;
+      const stored=localStorage.getItem(storedKey);
       const starting = stored===null ? product.quantity : parseInt(stored,10) || product.quantity;
-      const finalRemaining = Math.max(starting - 1, 0);
-      localStorage.setItem(key,String(finalRemaining));
-      historyStack.push({key:key,before:starting});
-      renderProduct(product, finalRemaining);
-      if(finalRemaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
-      else { beep(false); vibrate(false); speak('Mancano '+finalRemaining); showMsg('Mancano '+finalRemaining); }
+      const remaining = Math.max(starting - 1, 0);
+      localStorage.setItem(storedKey,String(remaining));
+      historyStack.push({key:storedKey,before:starting});
+      renderProduct(product, remaining);
+      if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
+      else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
       return;
     }
 
@@ -505,7 +606,7 @@ function renderColList(){
     div.className='colitem'+(col.letter===settings.activeQtyColumn?' sel':'');
     div.innerHTML='<span class="swatch" style="background:'+col.color+'"></span><b>'+col.letter+'</b>&nbsp;-&nbsp;'+(col.header||'(senza nome)');
     div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList();
-      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
+      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); if(settings.driveLink) buildQueuedProducts(); };
     c.appendChild(div);
   });
 }
