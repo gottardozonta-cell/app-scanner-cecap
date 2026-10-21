@@ -88,11 +88,15 @@
 
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
-  <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
-  <label>Token segreto (la password dello script)</label><input id="sToken">
-  <label>ID foglio Google</label><input id="sSheet">
-  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
+  <div id="driveSettings">
+    <label>Link Google Drive</label>
+    <input id="sDriveLink" placeholder="https://drive.google.com/drive/folders/...">
+  </div>
   <div id="gestoreSettings" class="hidden">
+    <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
+    <label>Token segreto (la password dello script)</label><input id="sToken">
+    <label>ID foglio Google</label><input id="sSheet">
+    <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
     <label>Colonna descrizione</label><input id="sDescCol">
@@ -121,7 +125,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'', driveLink:'',
   barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
@@ -304,7 +308,8 @@ function applyRole(){
   $('bottomNav').classList.toggle('hidden',!isG);
   $('resetColBtn').classList.toggle('hidden',!isG);
   $('resetAllBtn').classList.toggle('hidden',!isG);
-  $('gestoreSettings').classList.toggle('hidden',!isG);
+  $('driveSettings').classList.toggle('hidden',!isG);
+  $('gestoreSettings').classList.toggle('hidden',true);
   if(!isG){
     showView('viewScanner');
   }
@@ -359,8 +364,10 @@ function fillSettingsForm(){
   $('sBarcodeCol').value=settings.barcodeColumn; $('sNameCol').value=settings.nameColumn;
   $('sDescCol').value=settings.descColumn; $('sPhotoCol').value=settings.photoColumn;
   $('sQtyCol').value=settings.activeQtyColumn;
+  $('sDriveLink').value=settings.driveLink || '';
 }
 $('saveSettingsBtn').onclick=()=>{
+  settings.driveLink=$('sDriveLink').value.trim();
   settings.scriptUrl=$('sUrl').value.trim();
   settings.token=$('sToken').value.trim();
   settings.spreadsheetId=$('sSheet').value.trim();
