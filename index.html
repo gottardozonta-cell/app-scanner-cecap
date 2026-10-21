@@ -84,6 +84,7 @@
 
   <div id="viewGestore" class="view hidden">
     <h2>Aggiungi / modifica prodotto</h2>
+    <label>Codice</label><input id="fCode">
     <label>Codice a barre</label><input id="fBarcode">
     <label>Nome prodotto</label><input id="fName">
     <label>Descrizione</label><input id="fDesc">
@@ -215,100 +216,15 @@
       localStorage.setItem('settings', JSON.stringify(settings));
     }
 
-    function isAppsScriptUrl(url) {
-      if (!url) return false;
-      try {
-        const u = new URL(url);
-        const host = (u.hostname || '').toLowerCase();
-        const path = (u.pathname || '').toLowerCase();
-        return host.includes('script.google.com') && /(?:\/exec|\/dev)(?:[?#]|$)/.test(path);
-      } catch (e) {
-        return false;
-      }
-    }
-
-    function columnLetterFromIndex(index) {
-      let n = index + 1;
-      let letters = '';
-      while (n > 0) {
-        const rem = (n - 1) % 26;
-        letters = String.fromCharCode(65 + rem) + letters;
-        n = Math.floor((n - 1) / 26);
-      }
-      return letters;
-    }
-
-    function columnIndexFromLetter(letter) {
-      const name = (letter || '').toUpperCase().replace(/[^A-Z]/g, '');
-      if (!name) return -1;
-      let value = 0;
-      for (let i = 0; i < name.length; i++) {
-        value = value * 26 + (name.charCodeAt(i) - 64);
-      }
-      return value - 1;
-    }
-
-    function buildColumnsMeta(headers) {
-      const palette = ['#4CAF50','#FF9800','#2196F3','#9C27B0','#E91E63','#00BCD4','#795548','#607D8B'];
-      return headers.map((header, index) => ({
-        letter: columnLetterFromIndex(index),
-        header: header || ('Colonna ' + columnLetterFromIndex(index)),
-        color: palette[index % palette.length]
-      }));
-    }
-
-    function getHeaderIndexByColumnSpec(spec, headers) {
-      if (!spec) return -1;
-      const text = String(spec).trim();
-      if (!text) return -1;
-      const idx = columnIndexFromLetter(text);
-      if (idx >= 0) return idx;
-      const normalized = text.toLowerCase();
-      return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
-    }
-
-    function toNumber(value) {
-      if (value === null || value === undefined || value === '') return 0;
-      const txt = String(value).trim().replace('.', '').replace(',', '.');
-      const parsed = Number(txt);
-      return Number.isFinite(parsed) ? parsed : 0;
-    }
-
-    function speak(t) {
-      try {
-        const u = new SpeechSynthesisUtterance(t);
-        u.lang = 'it-IT';
-        speechSynthesis.cancel();
-        speechSynthesis.speak(u);
-      } catch (e) {}
-    }
-
-    function beep(long) {
-      try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.type = 'sine';
-        o.frequency.value = long ? 880 : 660;
-        g.gain.setValueAtTime(0.3, ctx.currentTime);
-        o.start(); o.stop(ctx.currentTime + (long ? 0.5 : 0.15));
-      } catch (e) {}
-    }
-
-    function vibrate(long) {
-      if (navigator.vibrate) navigator.vibrate(long ? [300,100,300] : 150);
-    }
-
     function showMsg(text, isErr) {
       const m = $('msg');
       m.textContent = text || '';
       m.className = 'msg' + (isErr ? ' err' : '');
     }
 
-    function normalizeDriveFileUrl(raw) {
+    function convertDriveUrl(raw) {
       if (!raw) return '';
-      const value = raw.trim();
+      const value = String(raw).trim();
       if (!value) return '';
       const googleId = value.match(/(?:\/d\/|id=)([a-z0-9_-]{10,})/i);
       if (googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
@@ -352,6 +268,51 @@
       return rows;
     }
 
+    function columnLetterFromIndex(index) {
+      let n = index + 1;
+      let letters = '';
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        letters = String.fromCharCode(65 + rem) + letters;
+        n = Math.floor((n - 1) / 26);
+      }
+      return letters;
+    }
+
+    function columnIndexFromLetter(letter) {
+      const name = (letter || '').toUpperCase().replace(/[^A-Z]/g, '');
+      if (!name) return -1;
+      let value = 0;
+      for (let i = 0; i < name.length; i++) value = value * 26 + (name.charCodeAt(i) - 64);
+      return value - 1;
+    }
+
+    function buildColumnsMeta(headers) {
+      const palette = ['#4CAF50', '#FF9800', '#2196F3', '#9C27B0', '#E91E63', '#00BCD4', '#795548', '#607D8B'];
+      return headers.map((header, index) => ({
+        letter: columnLetterFromIndex(index),
+        header: header || ('Colonna ' + columnLetterFromIndex(index)),
+        color: palette[index % palette.length]
+      }));
+    }
+
+    function getHeaderIndexByColumnSpec(spec, headers) {
+      if (!spec) return -1;
+      const text = String(spec).trim();
+      if (!text) return -1;
+      const idx = columnIndexFromLetter(text);
+      if (idx >= 0) return idx;
+      const normalized = text.toLowerCase();
+      return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
+    }
+
+    function toNumber(value) {
+      if (value === null || value === undefined || value === '') return 0;
+      const txt = String(value).trim().replace('.', '').replace(',', '.');
+      const parsed = Number(txt);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
     function commonParams() {
       return {
         token: settings.token,
@@ -371,9 +332,7 @@
       const headers = data.headers || [];
       const rows = data.rows || [];
 
-      if (params.action === 'meta') {
-        return { ok: true, columns: buildColumnsMeta(headers) };
-      }
+      if (params.action === 'meta') return { ok: true, columns: buildColumnsMeta(headers) };
 
       if (params.action === 'getProduct') {
         const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
@@ -444,7 +403,7 @@
       if (!normalized) return { headers: [], rows: [] };
       try {
         const cleaned = normalized
-          .replace(/^\s*\]\s*}'\s*/i, '')
+          .replace(/^\s*\]\s*}\s*/i, '')
           .replace(/^\s*\/\*.*?\*\/\s*/s, '')
           .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
           .replace(/\)\s*;?\s*$/, '');
@@ -553,22 +512,7 @@
     }
 
     async function apiGet(params) {
-      if (settings.sourceType === 'local' && settings.localSheetData) {
-        return localSheetFetch(params);
-      }
-      if (settings.scriptUrl && isAppsScriptUrl(settings.scriptUrl)) {
-        const q = Object.entries(params).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
-        const sep = settings.scriptUrl.includes('?') ? '&' : '?';
-        const url = settings.scriptUrl + sep + q;
-        const r = await fetch(url);
-        const text = await r.text();
-        if (!text) return { ok: false, error: 'Nessuna risposta dal server.' };
-        const ct = (r.headers.get('content-type') || '').toLowerCase();
-        const looksHtml = text.trim().startsWith('<!doctype html') || text.trim().startsWith('<html') || ct.includes('text/html');
-        if (looksHtml) throw new Error('Il link inserito non è un endpoint JSON di Apps Script.');
-        try { return JSON.parse(text); }
-        catch (e) { throw new Error('Risposta non JSON dal backend.'); }
-      }
+      if (settings.sourceType === 'local' && settings.localSheetData) return localSheetFetch(params);
       if (settings.spreadsheetId) return await directSheetFetch(params);
       if (settings.localSheetData) return localSheetFetch(params);
       throw new Error('Inserisci un link Drive, un ID del foglio Google oppure carica un file locale.');
@@ -591,14 +535,14 @@
         const div = document.createElement('div');
         div.className = 'colitem' + (col.letter === settings.activeQtyColumn ? ' sel' : '');
         div.innerHTML = '<span class="swatch" style="background:' + col.color + '"></span><b>' + col.letter + '</b>&nbsp;-&nbsp;' + (col.header || '(senza nome)');
-        div.onclick = () => {
+        div.onclick = async () => {
           settings.activeQtyColumn = col.letter;
           saveSettings();
           renderColIndicator();
           renderColList();
           showMsg('Colonna attiva: ' + col.letter);
           if (role === 'GESTORE') {
-            startColumnSequence();
+            await startColumnSequence();
           }
         };
         c.appendChild(div);
@@ -661,8 +605,6 @@
       renderQueueList();
       $('productCard').classList.add('hidden');
       showMsg('FINE LAVORO');
-      speak('Fine lavoro');
-      beep(true); vibrate(true);
     }
 
     function showNextAutoProduct() {
@@ -675,7 +617,6 @@
       renderProduct(product, Number(product.quantity) || 0);
       renderQueueList();
       showMsg(`Prodotto ${autoIndex + 1} di ${autoQueue.length}: ${product.name || 'Prodotto'} - ${product.quantity} pezzi`);
-      speak(`Prodotto ${autoIndex + 1} di ${autoQueue.length} ${product.name || 'Prodotto'} con ${product.quantity} pezzi`);
     }
 
     function renderProduct(p, remaining) {
@@ -685,7 +626,7 @@
       $('pDesc').textContent = p.description || '';
       $('pCount').textContent = done ? 'FATTO!' : remaining;
       $('pLabel').textContent = done ? 'PRODOTTO FINITO' : 'PEZZI RIMANENTI';
-      const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
+      const photoUrl = convertDriveUrl(p.photoUrl || '');
       if (photoUrl) {
         $('pPhoto').src = photoUrl;
         $('pPhoto').style.display = 'block';
@@ -723,7 +664,6 @@
           autoMode = false;
           renderQueueList();
           showMsg('Nessun prodotto con quantità valida in questa colonna.', true);
-          speak('Nessun prodotto nella colonna');
           return;
         }
 
@@ -739,7 +679,6 @@
         autoMode = false;
         renderQueueList();
         showMsg('Errore caricamento colonna: ' + e.message, true);
-        speak('Errore caricamento colonna');
       }
     }
 
@@ -752,8 +691,6 @@
       }
       if (String(code).trim() !== String(current.barcode || '').trim()) {
         showMsg('Codice sbagliato: serve ' + (current.name || current.barcode), true);
-        speak('Codice sbagliato');
-        beep(true);
         return false;
       }
       return true;
@@ -763,21 +700,16 @@
       const normalizedCode = String(code || '').trim();
       showMsg('Ricerca: ' + normalizedCode + ' ...');
 
-      if (autoMode && !processAutoProductMatch(normalizedCode)) {
-        return;
-      }
+      if (autoMode && !processAutoProductMatch(normalizedCode)) return;
 
       apiGet(Object.assign({ action: 'getProduct', barcode: normalizedCode }, commonParams()))
         .then(res => {
           if (!res.ok) {
             showMsg(res.error, true);
-            speak('Errore');
             return;
           }
           if (!res.product) {
             showMsg('Prodotto non presente nel foglio', true);
-            speak('Prodotto non presente');
-            beep(true);
             return;
           }
 
@@ -794,8 +726,6 @@
           if (autoMode) {
             if (remaining === 0) {
               showMsg('RIGA COMPLETATA: ' + (p.name || 'Prodotto') + '. Passo al successivo.', false);
-              speak('Riga completata');
-              beep(true); vibrate(true);
               autoIndex += 1;
               renderQueueList();
               setTimeout(() => {
@@ -808,22 +738,17 @@
               return;
             }
             showMsg('Mancano ' + remaining + ' per ' + (p.name || 'Prodotto'));
-            speak('Mancano ' + remaining);
-            beep(false); vibrate(false);
             return;
           }
 
           if (remaining === 0) {
-            beep(true); vibrate(true); speak('Fatto');
             showMsg('COMPLETATO!');
           } else {
-            beep(false); vibrate(false); speak('Mancano ' + remaining);
             showMsg('Mancano ' + remaining);
           }
         })
         .catch(e => {
           showMsg('Errore: ' + e.message, true);
-          speak('Errore di collegamento');
         });
     }
 
@@ -911,12 +836,51 @@
       if (id === 'viewScanner') startScanner(); else stopScanner();
     }
 
+    function saveProductForm() {
+      const code = ($('fCode').value || '').trim();
+      const barcode = ($('fBarcode').value || '').trim();
+      const name = ($('fName').value || '').trim();
+      const desc = ($('fDesc').value || '').trim();
+      const qty = Number(($('fQty').value || '').trim()) || 0;
+      const photoDrive = ($('fPhotoDrive').value || '').trim();
+
+      if (!barcode && !code) {
+        showMsg('Inserisci almeno codice o barcode.', true);
+        return;
+      }
+
+      const payload = {
+        code: code || barcode,
+        barcode: barcode || code,
+        name,
+        description: desc,
+        quantity: qty,
+        photoUrl: photoDrive,
+        qtyColumn: settings.activeQtyColumn,
+        savedAt: new Date().toISOString()
+      };
+
+      const key = 'product_' + (barcode || code);
+      localStorage.setItem(key, JSON.stringify(payload));
+      showMsg('Prodotto salvato localmente.', false);
+      $('fCode').value = '';
+      $('fBarcode').value = '';
+      $('fName').value = '';
+      $('fDesc').value = '';
+      $('fQty').value = '';
+      $('fPhotoDrive').value = '';
+    }
+
     $('startWorkBtn').onclick = () => startColumnSequence();
     $('startColumnBtn').onclick = () => startColumnSequence();
+    $('saveProductBtn').onclick = saveProductForm;
+
     $('startSelectedColumnBtn').onclick = () => {
-      settings.activeQtyColumn = $('sQtyCol').value.trim() || settings.activeQtyColumn;
+      settings.activeQtyColumn = ($('sQtyCol').value.trim() || settings.activeQtyColumn);
       saveSettings();
-      loadMeta();
+      renderColIndicator();
+      renderColList();
+      showMsg('Colonna attiva: ' + settings.activeQtyColumn);
       startColumnSequence();
     };
 
@@ -936,13 +900,11 @@
     $('undoBtn').onclick = () => {
       if (!historyStack.length) {
         showMsg('Niente da annullare');
-        speak('Niente da annullare');
         return;
       }
       const last = historyStack.pop();
       localStorage.setItem(last.key, String(last.before));
       showMsg('Annullato. Riportato a ' + last.before);
-      speak('Annullato, mancano ' + last.before);
       if (currentProduct) renderProduct(currentProduct, last.before);
     };
 
@@ -952,7 +914,6 @@
       historyStack = [];
       $('productCard').className = 'card pending hidden';
       showMsg('Colonna ' + settings.activeQtyColumn + ' azzerata');
-      speak('Colonna azzerata');
     };
 
     $('resetAllBtn').onclick = () => {
@@ -961,7 +922,6 @@
       historyStack = [];
       $('productCard').className = 'card pending hidden';
       showMsg('Tutti i conteggi azzerati');
-      speak('Tutti i conteggi azzerati');
     };
 
     $('authBtn').onclick = () => {
@@ -969,7 +929,6 @@
         role = 'MAGAZZINIERE';
         localStorage.setItem('role', role);
         applyRole();
-        speak('Modalità magazziniere');
       } else {
         $('loginPass').value = '';
         $('loginDialog').showModal();
@@ -982,10 +941,8 @@
         localStorage.setItem('role', role);
         $('loginDialog').close();
         applyRole();
-        speak('Accesso gestore eseguito');
       } else {
         showMsg('Credenziali non valide', true);
-        speak('Credenziali non valide');
       }
     };
 
@@ -1003,46 +960,48 @@
       settings.activeQtyColumn = $('sQtyCol').value.trim() || settings.activeQtyColumn;
       settings.sourceType = detectSourceType(settings.spreadsheetId || '');
       saveSettings();
-      await loadMeta();
-      renderColIndicator();
-      renderColList();
-      showView('viewScanner');
-      if (role === 'GESTORE') startColumnSequence();
+      loadMeta();
+      showMsg('Impostazioni salvate.');
     };
 
-    $('loadLocalFileBtn').onclick = async () => {
+    $('loadLocalFileBtn').onclick = () => {
       const file = $('sLocalFile').files[0];
-      if (!file) return;
-      try {
-        const ext = (file.name || '').split('.').pop().toLowerCase();
-        if (!['xlsx', 'xls', 'csv'].includes(ext)) throw new Error('File non valido. Usa .xlsx, .xls oppure .csv');
-        const arrayBuffer = await file.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-        const firstSheetName = workbook.SheetNames[0];
-        const ws = workbook.Sheets[firstSheetName];
-        const rowsRaw = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1, defval: '' });
-        const rows = rowsRaw.filter(row => Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== ''));
-        if (!rows.length) throw new Error('Il file caricato è vuoto.');
-        const headers = rows[0].map((h, idx) => String(h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
-        const dataRows = rows.slice(1).map(values => {
-          const obj = {};
-          headers.forEach((header, index) => { obj[header] = values[index] !== undefined ? String(values[index]) : ''; });
-          return obj;
-        });
-        settings.sourceType = 'local';
-        settings.spreadsheetId = '';
-        settings.localSheetData = { headers, rows: dataRows, fileName: file.name };
-        saveSettings();
-        showMsg('File locale caricato correttamente');
-        loadMeta();
-      } catch (e) {
-        showMsg(e.message || 'Errore caricamento file', true);
+      if (!file) {
+        showMsg('Seleziona un file Excel o CSV.', true);
+        return;
       }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const binary = e.target.result;
+          const workbook = XLSX.read(binary, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
+          const headers = Object.keys(rows[0] || {});
+          const data = {
+            headers,
+            rows: rows.map(r => {
+              const obj = {};
+              headers.forEach(h => obj[h] = String(r[h] || ''));
+              return obj;
+            })
+          };
+          settings.localSheetData = data;
+          settings.sourceType = 'local';
+          saveSettings();
+          loadMeta();
+          showMsg('File locale caricato.');
+        } catch (err) {
+          showMsg('Errore file locale: ' + err.message, true);
+        }
+      };
+      reader.readAsArrayBuffer(file);
     };
 
-    fillSettingsForm();
     applyRole();
+    fillSettingsForm();
     loadMeta();
+    showView('viewScanner');
   </script>
 </body>
 </html>
