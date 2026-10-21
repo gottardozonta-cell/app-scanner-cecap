@@ -89,7 +89,6 @@
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
   <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
-  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
   <div id="gestoreSettings" class="hidden">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
@@ -119,7 +118,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
 let role = localStorage.getItem('role') || 'MAGAZZINIERE';
@@ -144,6 +143,8 @@ function loadSettings(){
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
     if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
+    if (normalized.sheetName) normalized.sheetName = String(normalized.sheetName).trim();
+    if (!normalized.sheetName) delete normalized.sheetName;
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -186,8 +187,9 @@ function columnIndexFromLetter(letter){
 }
 
 function googleSheetGvizUrl(sheetId, sheetName){
-  const name = (sheetName || 'Foglio1').trim() || 'Foglio1';
-  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+  const name = (sheetName || '').trim();
+  const base = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
+  return name ? `${base}&sheet=${encodeURIComponent(name)}` : base;
 }
 
 function googleSheetCsvUrl(sheetId){
@@ -328,7 +330,7 @@ function commonParams(){
   return {
     token: settings.token,
     spreadsheetId: settings.spreadsheetId,
-    sheetName: settings.sheetName,
+    sheetName: settings.sheetName || '',
     barcodeColumn: settings.barcodeColumn,
     nameColumn: settings.nameColumn,
     descColumn: settings.descColumn,
@@ -358,7 +360,7 @@ async function directSheetFetch(params){
     return { ok:false, error:'ID foglio Google mancante.' };
   }
 
-  const sheetName = settings.sheetName || 'Foglio1';
+  const sheetName = (settings.sheetName || '').trim();
   const urls = [
     googleSheetGvizUrl(settings.spreadsheetId, sheetName),
     googleSheetCsvUrl(settings.spreadsheetId)
@@ -604,7 +606,6 @@ function renderColList(){
 
 function fillSettingsForm(){
   $('sSheet').value = settings.spreadsheetId;
-  $('sTab').value = settings.sheetName;
   $('sBarcodeCol').value = settings.barcodeColumn;
   $('sNameCol').value = settings.nameColumn;
   $('sDescCol').value = settings.descColumn;
@@ -614,7 +615,7 @@ function fillSettingsForm(){
 
 $('saveSettingsBtn').onclick=()=>{
   settings.spreadsheetId = normalizeSpreadsheetId($('sSheet').value.trim());
-  settings.sheetName = $('sTab').value.trim() || 'Foglio1';
+  delete settings.sheetName;
   if(role==='GESTORE'){
     settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
     settings.nameColumn = $('sNameCol').value.trim().toUpperCase() || 'C';
