@@ -118,7 +118,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sourceType:'sheet', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
 let role = localStorage.getItem('role') || 'MAGAZZINIERE';
@@ -136,25 +136,35 @@ function normalizeSpreadsheetId(value){
   try {
     const u = new URL(raw);
     const host = (u.hostname || '').toLowerCase();
-    if (host.includes('docs.google.com') || host.includes('drive.google.com')) {
-      const path = u.pathname || '';
-      const matches = [
-        path.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]{10,})/i),
-        path.match(/\/d\/([A-Za-z0-9_-]{10,})/i)
-      ];
-      for (const match of matches) {
-        if (match && match[1]) return match[1];
-      }
-      const idFromQuery = u.searchParams.get('id');
-      if (idFromQuery && /^[A-Za-z0-9_-]{10,}$/.test(idFromQuery)) return idFromQuery;
+    const path = (u.pathname || '').toLowerCase();
+
+    if (host.includes('docs.google.com')) {
+      const m = path.match(/\/spreadsheets\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i);
+      if (m && m[1]) return m[1];
+      const qid = u.searchParams.get('id');
+      if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
+    }
+
+    if (host.includes('drive.google.com')) {
+      const m = path.match(/\/file\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i);
+      if (m && m[1]) return m[1];
+      const qid = u.searchParams.get('id');
+      if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
     }
   } catch (e) {}
 
-  const match = raw.match(/(?:\/spreadsheets\/d\/|\/d\/|id=)([A-Za-z0-9_-]{10,})/i) ||
-    raw.match(/key=([A-Za-z0-9_-]+)/i) ||
-    raw.match(/^([A-Za-z0-9_-]{10,})$/i);
-  if (match && match[1]) return match[1];
+  const m = raw.match(/(?:\/spreadsheets\/d\/|\/file\/d\/|\/d\/|id=)([a-z0-9_-]{10,})/i) || raw.match(/key=([a-z0-9_-]+)/i) || raw.match(/^([a-z0-9_-]{10,})$/i);
+  if (m && m[1]) return m[1];
+
   return raw;
+}
+
+function detectSourceType(value){
+  const raw = (value || '').trim();
+  if (!raw) return 'sheet';
+  const low = raw.toLowerCase();
+  if (low.includes('drive.google.com/file/d/') || low.includes('/file/d/') || low.includes('drive.google.com/uc?') || low.includes('export=download')) return 'drive';
+  return 'sheet';
 }
 
 function loadSettings(){
@@ -162,6 +172,7 @@ function loadSettings(){
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
     if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
+    normalized.sourceType = detectSourceType(normalized.spreadsheetId || parsed.spreadsheetId || '');
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -213,8 +224,8 @@ function googleSheetCsvUrl(sheetId){
   return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
 }
 
-function googleSheetPubCsvUrl(sheetId){
-  return `https://docs.google.com/spreadsheets/d/${sheetId}/pub?output=csv`;
+function googleDriveCsvUrl(fileId){
+  return `https://drive.google.com/uc?export=download&id=${fileId}`;
 }
 
 function parseGoogleSheetResponse(text){
@@ -314,10 +325,10 @@ function normalizeDriveFileUrl(raw){
   if(!raw) return '';
   const value = raw.trim();
   if(!value) return '';
-  const googleId = value.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/i);
+  const googleId = value.match(/(?:\/d\/|id=)([a-z0-9_-]{10,})/i);
   if(googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
   if(/^https?:\/\//i.test(value)) return value;
-  if(/^[A-Za-z0-9_-]{10,}$/.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
+  if(/^[a-z0-9_-]{10,}$/i.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
   return value;
 }
 
@@ -356,6 +367,7 @@ function commonParams(){
   return {
     token: settings.token,
     spreadsheetId: settings.spreadsheetId,
+    sourceType: settings.sourceType || 'sheet',
     barcodeColumn: settings.barcodeColumn,
     nameColumn: settings.nameColumn,
     descColumn: settings.descColumn,
@@ -386,11 +398,15 @@ async function directSheetFetch(params){
   }
 
   const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
-  const urls = [
-    googleSheetCsvUrl(sheetId),
-    googleSheetPubCsvUrl(sheetId),
-    googleSheetGvizUrl(sheetId, 'Foglio1')
-  ];
+  const sourceType = (settings.sourceType || detectSourceType(settings.spreadsheetId || ''));
+
+  const urls = [];
+  if (sourceType === 'drive') {
+    urls.push(googleDriveCsvUrl(sheetId));
+  } else {
+    urls.push(googleSheetCsvUrl(sheetId));
+    urls.push(googleSheetGvizUrl(sheetId, 'Foglio1'));
+  }
 
   let lastError = null;
 
@@ -449,14 +465,14 @@ async function directSheetFetch(params){
         return { ok:true, product };
       }
 
-      return { ok:false, error:'Azione non supportata per Google Sheet diretto.' };
+      return { ok:false, error:'Azione non supportata.' };
     } catch (err) {
       lastError = err;
       continue;
     }
   }
 
-  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e permessi del foglio e assicurati che sia pubblico.' };
+  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio. Verifica ID e permessi del file.' };
 }
 
 async function apiGet(params){
@@ -640,7 +656,9 @@ function fillSettingsForm(){
 }
 
 $('saveSettingsBtn').onclick=()=>{
-  settings.spreadsheetId = normalizeSpreadsheetId($('sSheet').value.trim());
+  const raw = $('sSheet').value.trim();
+  settings.spreadsheetId = normalizeSpreadsheetId(raw);
+  settings.sourceType = detectSourceType(raw);
   if(role==='GESTORE'){
     settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
     settings.nameColumn = $('sNameCol').value.trim().toUpperCase() || 'C';
