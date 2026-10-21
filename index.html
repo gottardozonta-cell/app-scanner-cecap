@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<html lang="it"><!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="utf-8">
@@ -24,7 +23,7 @@
     .btn-dark { background:#880E4F; color:#fff; }
     .row { display:flex; gap:8px; }
     .row button { flex:1; }
-    input { width:100%; font-size:20px; padding:12px; margin-top:6px; border:2px solid #00695C; border-radius:8px; }
+    input, select { width:100%; font-size:20px; padding:12px; margin-top:6px; border:2px solid #00695C; border-radius:8px; background:#fff; }
     label { font-size:16px; font-weight:bold; margin-top:12px; display:block; }
     #camera { width:100%; min-height:280px; background:#000; border-radius:10px; overflow:hidden; margin-top:8px; }
     .card { border-radius:12px; padding:14px; margin-top:10px; display:flex; gap:12px; align-items:center; }
@@ -104,6 +103,12 @@
     <label>ID foglio Google / link Drive (il gid nella URL viene rispettato)</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/...#gid=123 oppure ID">
     <label>File Excel locale (.xlsx, .xls, .csv)</label><input id="sLocalFile" type="file" accept=".xlsx,.xls,.csv">
     <button class="big btn-primary" id="loadLocalFileBtn">CARICA FILE LOCALE</button>
+    <div id="localInfo" style="margin-top:6px; font-size:16px;"></div>
+    <label>Sorgente dati attiva</label>
+    <select id="sSource">
+      <option value="sheet">Foglio Google / Drive</option>
+      <option value="local">File locale caricato</option>
+    </select>
     <div id="gestoreSettings" class="hidden">
       <label>Nome scheda/tab (opzionale, es. Foglio1)</label><input id="sSheetTab" placeholder="Lascia vuoto per usare il gid della URL">
       <label>Colonna codice a barre</label><input id="sBarcodeCol">
@@ -115,6 +120,7 @@
     <button class="big btn-primary" id="startSelectedColumnBtn">AVVIA COLONNA</button>
     <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
     <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
+    <div style="text-align:center; opacity:.55; margin-top:24px; font-size:14px;">Magazzino Facile v2.2</div>
   </div>
 
   <nav id="bottomNav" class="hidden">
@@ -221,13 +227,22 @@
       try {
         const parsed = JSON.parse(localStorage.getItem('settings') || '{}');
         const normalized = Object.assign({}, DEFAULTS, parsed);
+        normalized.localSheetData = parsed.localSheetData || null;
         const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
         if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
         const gid = extractGid(rawSpreadsheet);
         if (gid) normalized.sheetGid = gid;
-        normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
+        // FIX: la sorgente scelta (file locale o foglio) va rispettata dopo il ricaricamento
+        if (parsed.sourceType === 'local') {
+          normalized.sourceType = normalized.localSheetData ? 'local' : 'sheet';
+        } else if (normalized.spreadsheetId) {
+          normalized.sourceType = detectSourceType(rawSpreadsheet);
+        } else if (normalized.localSheetData) {
+          normalized.sourceType = 'local';
+        } else {
+          normalized.sourceType = 'sheet';
+        }
         normalized.activeQtyColumn = normalizeColumnSpec(normalized.activeQtyColumn) || 'K';
-        normalized.localSheetData = parsed.localSheetData || normalized.localSheetData || null;
         return normalized;
       } catch (e) {
         return Object.assign({}, DEFAULTS);
@@ -235,7 +250,11 @@
     }
 
     function saveSettings() {
-      localStorage.setItem('settings', JSON.stringify(settings));
+      try {
+        localStorage.setItem('settings', JSON.stringify(settings));
+      } catch (e) {
+        showMsg('Impossibile salvare le impostazioni (file locale troppo grande?): ' + e.message, true);
+      }
     }
 
     function showMsg(text, isErr) {
@@ -400,12 +419,16 @@
 
       if (params.action === 'listProductsForColumn') {
         const products = [];
+        let withBarcode = 0;
+        let withQty = 0;
         rows.forEach((row, rowIndex) => {
           const p = makeProduct(row, rowIndex);
+          if (p.barcode) withBarcode++;
+          if (p.quantity > 0) withQty++;
           if (!p.barcode || p.quantity <= 0) return;
           products.push(p);
         });
-        return { ok: true, products };
+        return { ok: true, products, stats: { rows: rows.length, withBarcode, withQty } };
       }
 
       return { ok: false, error: 'Azione non supportata.' };
@@ -471,6 +494,20 @@
       }
     }
 
+    // Legge un foglio Excel ANCORANDOLO ad A1: anche se il file ha colonne o righe
+    // iniziali vuote, la colonna A resta l'indice 0 e la K l'indice 10
+    function matrixFromWorksheet(ws) {
+      if (!ws || !ws['!ref']) return [];
+      const ref = XLSX.utils.decode_range(ws['!ref']);
+      return XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        raw: true,
+        defval: '',
+        blankrows: true,
+        range: { s: { r: 0, c: 0 }, e: { r: ref.e.r, c: ref.e.c } }
+      });
+    }
+
     async function fetchGoogleSheetData(url, label) {
       const res = await fetch(url, { cache: 'no-store' });
       const text = await res.text();
@@ -501,8 +538,7 @@
         const workbook = XLSX.read(buffer, { type: 'array' });
         const tabName = (settings.sheetTab && workbook.SheetNames.includes(settings.sheetTab)) ? settings.sheetTab : workbook.SheetNames[0];
         if (!tabName) throw new Error('Il file non contiene fogli.');
-        const ws = workbook.Sheets[tabName];
-        const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
+        const matrix = matrixFromWorksheet(workbook.Sheets[tabName]);
         return tableFromMatrix(matrix);
       }
 
@@ -646,14 +682,34 @@
       });
     }
 
+    function escHtml(s) {
+      return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    // Mostra un riepilogo del file locale e dei nomi delle colonne chiave (A, E, K, Q)
+    function renderLocalInfo() {
+      const el = $('localInfo');
+      if (!el) return;
+      const table = coerceTable(settings.localSheetData);
+      if (!table || !table.headers.length) {
+        el.textContent = 'Nessun file locale in memoria.';
+        return;
+      }
+      const h = table.headers;
+      el.innerHTML = 'File locale in memoria: <b>' + table.rows.length + ' righe</b>, colonne A..' + columnLetterFromIndex(h.length - 1) +
+        '<br>A=' + escHtml(h[0]) + ' | E=' + escHtml(h[4] ?? '') + ' | K=' + escHtml(h[10] ?? '') + ' | Q=' + escHtml(h[16] ?? '');
+    }
+
     function fillSettingsForm() {
       $('sSheet').value = settings.spreadsheetId;
       $('sSheetTab').value = settings.sheetTab || '';
+      $('sSource').value = settings.sourceType === 'local' ? 'local' : 'sheet';
       $('sBarcodeCol').value = settings.barcodeColumn;
       $('sNameCol').value = settings.nameColumn;
       $('sDescCol').value = settings.descColumn;
       $('sPhotoCol').value = settings.photoColumn;
       $('sQtyCol').value = settings.activeQtyColumn;
+      renderLocalInfo();
     }
 
     function resetColumnCounters(column) {
@@ -762,7 +818,13 @@
           autoIndex = 0;
           autoMode = false;
           renderQueueList();
-          showMsg('Nessun prodotto con quantità > 0 nella colonna ' + settings.activeQtyColumn + '.', true);
+          const st = res.stats || { rows: 0, withBarcode: 0, withQty: 0 };
+          showMsg('Nessun prodotto valido nella colonna ' + settings.activeQtyColumn +
+            ' | Sorgente: ' + (settings.sourceType === 'local' ? 'FILE LOCALE' : 'FOGLIO GOOGLE') +
+            ' | Righe lette: ' + st.rows +
+            ' | barcode in col. ' + settings.barcodeColumn + ': ' + st.withBarcode +
+            ' | quantità > 0 in col. ' + settings.activeQtyColumn + ': ' + st.withQty +
+            '. Controlla sorgente e colonne in IMPOSTAZIONI.', true);
           return;
         }
 
@@ -1095,10 +1157,21 @@
       settings.descColumn = normalizeColumnSpec($('sDescCol').value) || settings.descColumn;
       settings.photoColumn = normalizeColumnSpec($('sPhotoCol').value) || settings.photoColumn;
       settings.activeQtyColumn = normalizeColumnSpec($('sQtyCol').value) || settings.activeQtyColumn;
-      settings.sourceType = detectSourceType(settings.spreadsheetId || '');
+      const chosenSource = $('sSource').value;
+      if (chosenSource === 'local') {
+        if (settings.localSheetData) {
+          settings.sourceType = 'local';
+        } else {
+          settings.sourceType = detectSourceType(settings.spreadsheetId || '');
+          showMsg('Nessun file locale caricato: uso il foglio Google.', true);
+        }
+      } else {
+        settings.sourceType = detectSourceType(settings.spreadsheetId || '');
+      }
       saveSettings();
       loadMeta();
-      showMsg('Impostazioni salvate.');
+      renderLocalInfo();
+      showMsg('Impostazioni salvate. Sorgente attiva: ' + (settings.sourceType === 'local' ? 'FILE LOCALE' : 'FOGLIO GOOGLE/DRIVE') + '.');
     };
 
     $('loadLocalFileBtn').onclick = () => {
@@ -1117,15 +1190,16 @@
           const binary = e.target.result;
           const workbook = XLSX.read(binary, { type: 'array' });
           const tabName = (settings.sheetTab && workbook.SheetNames.includes(settings.sheetTab)) ? settings.sheetTab : workbook.SheetNames[0];
-          const sheet = workbook.Sheets[tabName];
-          // FIX: header:1 => matrice posizionale: la colonna K è SEMPRE l'indice 10, ecc.
-          const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '', blankrows: true });
+          // FIX: matrice posizionale ancorata ad A1: la colonna K è SEMPRE l'indice 10
+          const matrix = matrixFromWorksheet(workbook.Sheets[tabName]);
           const table = tableFromMatrix(matrix);
           settings.localSheetData = { headers: table.headers, matrix: table.rows };
           settings.sourceType = 'local';
           saveSettings();
           loadMeta();
-          showMsg('File locale caricato (' + table.rows.length + ' righe, colonne fino a ' + columnLetterFromIndex(Math.max(table.headers.length - 1, 0)) + ').');
+          $('sSource').value = 'local';
+          renderLocalInfo();
+          showMsg('File locale caricato (' + table.rows.length + ' righe, colonne fino a ' + columnLetterFromIndex(Math.max(table.headers.length - 1, 0)) + '). Controlla qui sotto i nomi delle colonne A, E, K, Q.');
         } catch (err) {
           showMsg('Errore file locale: ' + err.message, true);
         }
