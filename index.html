@@ -91,10 +91,7 @@
 <!-- IMPOSTAZIONI -->
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
-  <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
-  <label>Token segreto (la password dello script)</label><input id="sToken">
-  <label>ID foglio Google</label><input id="sSheet">
-  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
+  <label>Link Google Drive del foglio dati</label><input id="sDrive" placeholder="https://docs.google.com/spreadsheets/d/...">
   <div id="gestoreSettings" class="hidden">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
@@ -124,7 +121,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
+const DEFAULTS = { scriptUrl:'', driveLink:'', token:'', spreadsheetId:'', sheetName:'',
   barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
@@ -134,6 +131,7 @@ let currentProduct = null;
 let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
+let driveDataCache = [];
 
 function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
@@ -159,6 +157,143 @@ function normalizeDriveFileUrl(raw){
   if(/^https?:\/\//i.test(value)) return value;
   if(/^[A-Za-z0-9_-]{10,}$/.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
   return value;
+}
+
+function normalizeGoogleSheetUrl(raw){
+  if(!raw) return '';
+  const value = raw.trim();
+  if(!value) return '';
+
+  const sheetIdMatch = value.match(/\/spreadsheets\/d\/([A-Za-z0-9-_]+)/i) || value.match(/[?&]id=([A-Za-z0-9-_]+)/i);
+  const fileIdMatch = value.match(/\/file\/d\/([A-Za-z0-9-_]+)/i) || value.match(/(?:\/d\/|id=)([A-Za-z0-9-_]{10,})/i);
+  const foundId = sheetIdMatch && sheetIdMatch[1] ? sheetIdMatch[1] : (fileIdMatch && fileIdMatch[1] ? fileIdMatch[1] : null);
+
+  if(foundId){
+    let url = 'https://docs.google.com/spreadsheets/d/' + foundId + '/export?format=csv';
+    const gid = value.match(/[?&]gid=([0-9]+)/i);
+    if(gid && gid[1]) url += '&gid=' + gid[1];
+    return url;
+  }
+
+  if(/^https?:\/\//i.test(value) && /\.csv($|\?)/i.test(value)) return value;
+  return value;
+}
+
+function colToIndex(col){
+  const letters = (col || '').toUpperCase();
+  let value = 0;
+  for (const ch of letters){
+    value = value * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return Math.max(0, value - 1);
+}
+
+function indexToCol(index){
+  let n = index + 1;
+  let letters = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+function parseCsv(text){
+  if(!text || !text.trim()) return [];
+  const rows=[];
+  let row=[];
+  let value='';
+  let inQuotes=false;
+
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    const next=text[i+1];
+
+    if(ch === '"'){
+      if(inQuotes && next === '"') { value += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if(ch === ',' && !inQuotes){
+      row.push(value);
+      value='';
+    } else if((ch === '\n' || ch === '\r') && !inQuotes){
+      if(ch === '\r' && next === '\n') i++;
+      row.push(value);
+      if(row.some(cell => cell !== '')) rows.push(row);
+      row=[];
+      value='';
+    } else {
+      value += ch;
+    }
+  }
+
+  if(value.length || row.length){
+    row.push(value);
+    if(row.some(cell => cell !== '')) rows.push(row);
+  }
+
+  return rows;
+}
+
+function buildColumnsMetaFromRows(rows){
+  if(!rows.length) return [];
+  const headers = rows[0];
+  const palette = ['#00695C','#E65100','#0D47A1','#B71C1C','#880E4F','#1B5E20','#F9A825'];
+  return headers.map((header,index)=>({
+    letter:indexToCol(index),
+    header:(header||'').trim() || ('Colonna '+indexToCol(index)),
+    color:palette[index % palette.length]
+  }));
+}
+
+async function loadDriveSheetData(){
+  if(!settings.driveLink){
+    driveDataCache = [];
+    return [];
+  }
+
+  const exportUrl = normalizeGoogleSheetUrl(settings.driveLink);
+  if(!exportUrl){
+    driveDataCache = [];
+    throw new Error('Link Google Drive non valido. Usa il link del foglio condiviso.');
+  }
+
+  const res = await fetch(exportUrl, { mode: 'cors' });
+  if(!res.ok) throw new Error('Impossibile leggere il foglio da Google Drive.');
+  const csv = await res.text();
+  const rows = parseCsv(csv);
+  driveDataCache = rows;
+  return rows;
+}
+
+function findProductInDriveData(barcode){
+  if(!driveDataCache.length) return null;
+
+  const header = driveDataCache[0].map(cell => (cell || '').trim());
+  const barcodeIndex = colToIndex(settings.barcodeColumn);
+  const nameIndex = colToIndex(settings.nameColumn);
+  const descIndex = colToIndex(settings.descColumn);
+  const photoIndex = colToIndex(settings.photoColumn);
+  const qtyIndex = colToIndex(settings.activeQtyColumn);
+
+  for(let i=1;i<driveDataCache.length;i++){
+    const row = driveDataCache[i];
+    const rowBarcode = (row[barcodeIndex] || '').trim();
+    if(String(rowBarcode).toLowerCase() !== String(barcode).trim().toLowerCase()) continue;
+
+    const quantity = parseInt(String(row[qtyIndex] || '0').replace(/[^0-9-]/g,''),10) || 0;
+    return {
+      barcode: rowBarcode,
+      name: row[nameIndex] || '',
+      description: row[descIndex] || '',
+      photoUrl: row[photoIndex] || '',
+      quantity: quantity,
+      qtyColumn: settings.activeQtyColumn,
+      _source: 'drive'
+    };
+  }
+
+  return null;
 }
 
 function blobToBase64(blob){
@@ -204,7 +339,18 @@ function apiGet(params){
 }
 
 function loadMeta(){
-  if(!settings.scriptUrl){ showMsg('Vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
+  if(settings.driveLink){
+    loadDriveSheetData()
+      .then(rows => {
+        columnsMeta = buildColumnsMetaFromRows(rows);
+        renderColIndicator();
+        renderColList();
+      })
+      .catch(e => showMsg('Errore collegamento: '+e.message,true));
+    return;
+  }
+
+  if(!settings.scriptUrl){ showMsg('Imposta il link del foglio Google Drive oppure vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
   apiGet(Object.assign({action:'meta'}, commonParams()))
     .then(res=>{ if(res.ok){ columnsMeta=res.columns||[]; renderColIndicator(); renderColList(); } else showMsg(res.error,true); })
     .catch(e=>showMsg('Errore collegamento: '+e.message,true));
@@ -232,25 +378,50 @@ function onScan(code){
   handleBarcode(code);
 }
 
-function handleBarcode(code){
+async function handleBarcode(code){
   showMsg('Ricerca: '+code+' ...');
-  apiGet(Object.assign({action:'getProduct',barcode:code},commonParams()))
-    .then(res=>{
-      if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
-      if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
-      const p=res.product; currentProduct=p;
-      if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
-      const key='count_'+p.barcode+'_'+p.qtyColumn;
+
+  try {
+    if(settings.driveLink){
+      const product = findProductInDriveData(code);
+      if(!product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
+      currentProduct = product;
+      const before = product.quantity;
+      const remaining = Math.max(before - 1, 0);
+      const key='count_'+product.barcode+'_'+product.qtyColumn;
       const stored=localStorage.getItem(key);
-      const before = stored===null ? p.quantity : parseInt(stored);
-      const remaining=Math.max(before-1,0);
-      localStorage.setItem(key,String(remaining));
-      historyStack.push({key:key,before:before});
-      renderProduct(p,remaining);
-      if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
-      else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
-    })
-    .catch(e=>{ showMsg('Errore: '+e.message,true); speak('Errore di collegamento'); });
+      const starting = stored===null ? product.quantity : parseInt(stored,10) || product.quantity;
+      const finalRemaining = Math.max(starting - 1, 0);
+      localStorage.setItem(key,String(finalRemaining));
+      historyStack.push({key:key,before:starting});
+      renderProduct(product, finalRemaining);
+      if(finalRemaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
+      else { beep(false); vibrate(false); speak('Mancano '+finalRemaining); showMsg('Mancano '+finalRemaining); }
+      return;
+    }
+
+    if(!settings.scriptUrl){ showMsg('Nessun collegamento configurato. Inserisci il link Google Drive.',true); return; }
+
+    apiGet(Object.assign({action:'getProduct',barcode:code},commonParams()))
+      .then(res=>{
+        if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
+        if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
+        const p=res.product; currentProduct=p;
+        if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
+        const key='count_'+p.barcode+'_'+p.qtyColumn;
+        const stored=localStorage.getItem(key);
+        const before = stored===null ? p.quantity : parseInt(stored);
+        const remaining=Math.max(before-1,0);
+        localStorage.setItem(key,String(remaining));
+        historyStack.push({key:key,before:before});
+        renderProduct(p,remaining);
+        if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
+        else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
+      })
+      .catch(e=>{ showMsg('Errore: '+e.message,true); speak('Errore di collegamento'); });
+  } catch (e) {
+    showMsg('Errore: '+(e.message || 'collegamento'),true); speak('Errore di collegamento');
+  }
 }
 
 function renderProduct(p,remaining){
@@ -341,17 +512,13 @@ function renderColList(){
 
 /* --- IMPOSTAZIONI --- */
 function fillSettingsForm(){
-  $('sUrl').value=settings.scriptUrl; $('sToken').value=settings.token;
-  $('sSheet').value=settings.spreadsheetId; $('sTab').value=settings.sheetName;
+  $('sDrive').value=settings.driveLink || '';
   $('sBarcodeCol').value=settings.barcodeColumn; $('sNameCol').value=settings.nameColumn;
   $('sDescCol').value=settings.descColumn; $('sPhotoCol').value=settings.photoColumn;
   $('sQtyCol').value=settings.activeQtyColumn;
 }
 $('saveSettingsBtn').onclick=()=>{
-  settings.scriptUrl=$('sUrl').value.trim();
-  settings.token=$('sToken').value.trim();
-  settings.spreadsheetId=$('sSheet').value.trim();
-  settings.sheetName=$('sTab').value.trim();
+  settings.driveLink=$('sDrive').value.trim();
   if(role==='GESTORE'){
     settings.barcodeColumn=$('sBarcodeCol').value.trim().toUpperCase()||'E';
     settings.nameColumn=$('sNameCol').value.trim().toUpperCase()||'C';
@@ -383,7 +550,11 @@ $('saveProductBtn').onclick=async ()=>{
 
   showMsg('Salvataggio in corso...');
   try{
-    const res=await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+    if(!settings.scriptUrl && !settings.driveLink){
+      showMsg('Inserisci prima il link del foglio Google Drive e il collegamento di salvataggio.',true);
+      return;
+    }
+    const res=await fetch(settings.scriptUrl || settings.driveLink,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
     const txt=await res.text();
     let ok=false; try{ ok=JSON.parse(txt).ok; }catch(e){ ok=res.ok; }
     showMsg(ok?'Articolo salvato nel foglio ✔':'Errore nel salvataggio: '+txt,!ok);
@@ -401,8 +572,8 @@ fillSettingsForm();
 applyRole();
 renderColIndicator();
 loadMeta();
-if(!settings.scriptUrl && role==='GESTORE') showView('viewSettings');
-if(!settings.scriptUrl && role!=='GESTORE') showView('viewScanner');
+if(!settings.driveLink && !settings.scriptUrl && role==='GESTORE') showView('viewSettings');
+if(!settings.driveLink && !settings.scriptUrl && role!=='GESTORE') showView('viewScanner');
 </script>
 </body>
 </html>
