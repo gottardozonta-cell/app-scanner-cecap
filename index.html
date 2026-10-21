@@ -1,546 +1,378 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#00695C">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>Magazzino Facile</title>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<style>
-  * { box-sizing: border-box; font-family: Arial, sans-serif; }
-  body { margin:0; background:#f5f5f5; }
-  header { display:flex; align-items:center; justify-content:space-between; background:#00695C; color:#fff; padding:10px; position:sticky; top:0; z-index:10; }
-  header button { background:#fff; color:#00695C; border:none; padding:10px 14px; font-size:16px; border-radius:8px; font-weight:bold; }
-  header .title { font-size:20px; font-weight:bold; }
-  .view { padding:12px; padding-bottom:80px; }
-  button.big { width:100%; min-height:60px; font-size:20px; border:none; border-radius:10px; margin-top:10px; font-weight:bold; }
-  .btn-primary{ background:#00695C; color:#fff; }
-  .btn-orange{ background:#E65100; color:#fff; }
-  .btn-red{ background:#B71C1C; color:#fff; }
-  .btn-dark{ background:#880E4F; color:#fff; }
-  .row { display:flex; gap:8px; }
-  .row button { flex:1; }
-  input { width:100%; font-size:20px; padding:12px; margin-top:6px; border:2px solid #00695C; border-radius:8px; }
-  label { font-size:16px; font-weight:bold; margin-top:12px; display:block; }
-  #camera { width:100%; min-height:280px; background:#000; border-radius:10px; overflow:hidden; margin-top:8px; }
-  .card { border-radius:12px; padding:14px; margin-top:10px; display:flex; gap:12px; align-items:center; }
-  .card.pending { background:#E0F7FA; }
-  .card.done { background:#1B5E20; color:#fff; }
-  .card img { width:130px; height:130px; object-fit:contain; background:#fff; border-radius:8px; }
-  .name { font-size:24px; font-weight:bold; }
-  .desc { font-size:16px; }
-  .count { font-size:60px; font-weight:bold; line-height:1; }
-  .msg { padding:10px 12px; font-size:18px; font-weight:bold; min-height:20px; }
-  .err { color:#B71C1C; }
-  .swatch { display:inline-block; width:28px; height:28px; border-radius:6px; vertical-align:middle; margin:0 8px; border:1px solid #999; }
-  nav { position:fixed; bottom:0; left:0; right:0; display:flex; background:#004D40; }
-  nav button { flex:1; background:transparent; color:#fff; border:none; padding:16px; font-size:16px; font-weight:bold; }
-  nav button.active { background:#00695C; }
-  .hidden { display:none !important; }
-  .colitem { display:flex; align-items:center; padding:10px; font-size:18px; background:#fff; border-radius:8px; margin-top:6px; }
-  .colitem.sel { outline:4px solid #00695C; font-weight:bold; }
-  .queue-list { width:100%; display:flex; flex-direction:column; gap:4px; }
-  .queue-item { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:8px; background:#fff; }
-  .queue-item.current { background:#dff7e8; border:2px solid #00695C; }
-  dialog { border:none; border-radius:12px; padding:20px; width:90%; max-width:400px; }
-  dialog::backdrop { background:rgba(0,0,0,0.5); }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#00695C">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Magazzino Facile</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing:border-box; font-family:Arial,sans-serif; }
+    body { margin:0; background:#f5f5f5; }
+    header { display:flex; align-items:center; justify-content:space-between; background:#00695C; color:#fff; padding:10px; position:sticky; top:0; z-index:10; }
+    header button { background:#fff; color:#00695C; border:none; padding:10px 14px; font-size:16px; border-radius:8px; font-weight:bold; }
+    .title { font-size:20px; font-weight:bold; }
+    .view { padding:12px; padding-bottom:80px; }
+    button.big { width:100%; min-height:60px; font-size:20px; border:none; border-radius:10px; margin-top:10px; font-weight:bold; }
+    .btn-primary { background:#00695C; color:#fff; }
+    .btn-orange { background:#E65100; color:#fff; }
+    .btn-red { background:#B71C1C; color:#fff; }
+    .btn-dark { background:#880E4F; color:#fff; }
+    .row { display:flex; gap:8px; }
+    .row button { flex:1; }
+    input { width:100%; font-size:20px; padding:12px; margin-top:6px; border:2px solid #00695C; border-radius:8px; }
+    label { font-size:16px; font-weight:bold; margin-top:12px; display:block; }
+    #camera { width:100%; min-height:280px; background:#000; border-radius:10px; overflow:hidden; margin-top:8px; }
+    .card { border-radius:12px; padding:14px; margin-top:10px; display:flex; gap:12px; align-items:center; }
+    .card.pending { background:#E0F7FA; }
+    .card.done { background:#1B5E20; color:#fff; }
+    .card img { width:130px; height:130px; object-fit:contain; background:#fff; border-radius:8px; }
+    .name { font-size:24px; font-weight:bold; }
+    .desc { font-size:16px; }
+    .count { font-size:60px; font-weight:bold; line-height:1; }
+    .msg { padding:10px 12px; font-size:18px; font-weight:bold; min-height:20px; }
+    .err { color:#B71C1C; }
+    .swatch { display:inline-block; width:28px; height:28px; border-radius:6px; vertical-align:middle; margin:0 8px; border:1px solid #999; }
+    nav { position:fixed; bottom:0; left:0; right:0; display:flex; background:#004D40; }
+    nav button { flex:1; background:transparent; color:#fff; border:none; padding:16px; font-size:16px; font-weight:bold; }
+    nav button.active { background:#00695C; }
+    .hidden { display:none !important; }
+    .colitem { display:flex; align-items:center; padding:10px; font-size:18px; background:#fff; border-radius:8px; margin-top:6px; }
+    .colitem.sel { outline:4px solid #00695C; font-weight:bold; }
+    .queue-list { width:100%; display:flex; flex-direction:column; gap:4px; }
+    .queue-item { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:8px; background:#fff; }
+    .queue-item.current { background:#dff7e8; border:2px solid #00695C; }
+    dialog { border:none; border-radius:12px; padding:20px; width:90%; max-width:400px; }
+    dialog::backdrop { background:rgba(0,0,0,0.5); }
+  </style>
 </head>
 <body>
+  <header>
+    <button id="authBtn">LOGIN</button>
+    <div class="title" id="roleTitle">Magazziniere</div>
+    <button id="settingsBtn">IMPOSTAZIONI</button>
+  </header>
 
-<header>
-  <button id="authBtn">LOGIN</button>
-  <div class="title" id="roleTitle">Magazziniere</div>
-  <button id="settingsBtn">IMPOSTAZIONI</button>
-</header>
+  <div id="msg" class="msg"></div>
 
-<div id="msg" class="msg"></div>
-
-<div id="viewScanner" class="view">
-  <div id="colIndicator" style="font-size:22px; font-weight:bold;"></div>
-  <div id="camera"></div>
-  <div id="productCard" class="card pending hidden">
-    <img id="pPhoto" alt="">
-    <div>
-      <div class="name" id="pName"></div>
-      <div class="desc" id="pDesc"></div>
-      <div class="count" id="pCount"></div>
-      <div id="pLabel" style="font-size:18px; font-weight:bold;"></div>
+  <div id="viewScanner" class="view">
+    <div id="colIndicator" style="font-size:22px; font-weight:bold;"></div>
+    <div id="camera"></div>
+    <div id="productCard" class="card pending hidden">
+      <img id="pPhoto" alt="">
+      <div>
+        <div class="name" id="pName"></div>
+        <div class="desc" id="pDesc"></div>
+        <div class="count" id="pCount"></div>
+        <div id="pLabel" style="font-size:18px; font-weight:bold;"></div>
+      </div>
     </div>
+    <div id="productQueueList" class="card pending hidden" style="display:flex; flex-direction:column; align-items:stretch;">
+      <div style="font-size:18px; font-weight:bold; margin-bottom:6px;">Prodotti da lavorare</div>
+      <div id="queueContent" class="queue-list"></div>
+    </div>
+    <button class="big btn-primary" id="startWorkBtn">AVVIA LAVORO</button>
+    <button class="big btn-primary hidden" id="startColumnBtn">AVVIA COLONNA</button>
+    <button class="big btn-orange hidden" id="nextAutoBtn">PROSSIMO PRODOTTO</button>
+    <button class="big btn-orange" id="undoBtn">&#8617; INDIETRO (annulla ultima scansione)</button>
+    <button class="big btn-red hidden" id="resetColBtn">RICOMINCIA COLONNA DA ZERO</button>
+    <button class="big btn-dark hidden" id="resetAllBtn">AZZERA TUTTI I CONTEGGI</button>
   </div>
-  <div id="productQueueList" class="card pending hidden" style="display:flex; flex-direction:column; align-items:stretch;">
-    <div style="font-size:18px; font-weight:bold; margin-bottom:6px;">Prodotti da lavorare</div>
-    <div id="queueContent" class="queue-list"></div>
+
+  <div id="viewGestore" class="view hidden">
+    <h2>Aggiungi / modifica prodotto</h2>
+    <label>Codice a barre</label><input id="fBarcode">
+    <label>Nome prodotto</label><input id="fName">
+    <label>Descrizione</label><input id="fDesc">
+    <label>Quantità (nella colonna attiva)</label><input id="fQty" type="number" inputmode="numeric">
+    <label>Foto prodotto (dalla galleria o fotocamera)</label><input id="fPhoto" type="file" accept="image/*">
+    <label>Foto da Google Drive (URL completo o ID file)</label><input id="fPhotoDrive" placeholder="https://drive.google.com/file/d/... oppure ID del file">
+    <button class="big btn-primary" id="saveProductBtn">SALVA NEL FOGLIO</button>
+    <h2>Scegli la colonna countdown</h2>
+    <p>Tocca una colonna per attivarla (K, L, M, N, O...):</p>
+    <div id="colList"></div>
   </div>
-  <button class="big btn-primary" id="startWorkBtn">AVVIA LAVORO</button>
-  <button class="big btn-primary hidden" id="startColumnBtn">AVVIA COLONNA</button>
-  <button class="big btn-orange hidden" id="nextAutoBtn">PROSSIMO PRODOTTO</button>
-  <button class="big btn-orange" id="undoBtn">&#8617; INDIETRO (annulla ultima scansione)</button>
-  <button class="big btn-red hidden" id="resetColBtn">RICOMINCIA COLONNA DA ZERO</button>
-  <button class="big btn-dark hidden" id="resetAllBtn">AZZERA TUTTI I CONTEGGI</button>
-</div>
 
-<div id="viewGestore" class="view hidden">
-  <h2>Aggiungi / modifica prodotto</h2>
-  <label>Codice a barre</label><input id="fBarcode">
-  <label>Nome prodotto</label><input id="fName">
-  <label>Descrizione</label><input id="fDesc">
-  <label>Quantità (nella colonna attiva)</label><input id="fQty" type="number" inputmode="numeric">
-  <label>Foto prodotto (dalla galleria o fotocamera)</label><input id="fPhoto" type="file" accept="image/*">
-  <label>Foto da Google Drive (URL completo o ID file)</label><input id="fPhotoDrive" placeholder="https://drive.google.com/file/d/... oppure ID del file">
-  <button class="big btn-primary" id="saveProductBtn">SALVA NEL FOGLIO</button>
-  <h2>Scegli la colonna countdown</h2>
-  <p>Tocca una colonna per attivarla (K, L, M, N, O...):</p>
-  <div id="colList"></div>
-</div>
-
-<div id="viewSettings" class="view hidden">
-  <h2>Impostazioni</h2>
-  <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
-  <label>File Excel locale (.xlsx, .xls, .csv)</label><input id="sLocalFile" type="file" accept=".xlsx,.xls,.csv">
-  <button class="big btn-primary" id="loadLocalFileBtn">CARICA FILE LOCALE</button>
-  <div id="gestoreSettings" class="hidden">
-    <label>Colonna codice a barre</label><input id="sBarcodeCol">
-    <label>Colonna nome prodotto</label><input id="sNameCol">
-    <label>Colonna descrizione</label><input id="sDescCol">
-    <label>Colonna foto (URL)</label><input id="sPhotoCol">
-    <label>Colonna quantità attiva</label><input id="sQtyCol">
+  <div id="viewSettings" class="view hidden">
+    <h2>Impostazioni</h2>
+    <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
+    <label>File Excel locale (.xlsx, .xls, .csv)</label><input id="sLocalFile" type="file" accept=".xlsx,.xls,.csv">
+    <button class="big btn-primary" id="loadLocalFileBtn">CARICA FILE LOCALE</button>
+    <div id="gestoreSettings" class="hidden">
+      <label>Colonna codice a barre</label><input id="sBarcodeCol">
+      <label>Colonna nome prodotto</label><input id="sNameCol">
+      <label>Colonna descrizione</label><input id="sDescCol">
+      <label>Colonna foto (URL)</label><input id="sPhotoCol">
+      <label>Colonna quantità attiva</label><input id="sQtyCol">
+    </div>
+    <button class="big btn-primary" id="startSelectedColumnBtn">AVVIA COLONNA</button>
+    <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
+    <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
   </div>
-  <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
-  <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
-</div>
 
-<nav id="bottomNav" class="hidden">
-  <button data-view="viewScanner" class="active">SCANNER</button>
-  <button data-view="viewGestore">GESTIONE</button>
-  <button data-view="viewSettings">IMPOSTAZIONI</button>
-</nav>
+  <nav id="bottomNav" class="hidden">
+    <button data-view="viewScanner" class="active">SCANNER</button>
+    <button data-view="viewGestore">GESTIONE</button>
+    <button data-view="viewSettings">IMPOSTAZIONI</button>
+  </nav>
 
-<dialog id="loginDialog">
-  <h2>Login Gestore</h2>
-  <label>User ID</label><input id="loginUser" value="Gestore">
-  <label>Password</label><input id="loginPass" type="password">
-  <div class="row">
-    <button class="big btn-primary" id="doLoginBtn">ACCEDI</button>
-    <button class="big" id="cancelLoginBtn">ANNULLA</button>
-  </div>
-</dialog>
+  <dialog id="loginDialog">
+    <h2>Login Gestore</h2>
+    <label>User ID</label><input id="loginUser" value="Gestore">
+    <label>Password</label><input id="loginPass" type="password">
+    <div class="row">
+      <button class="big btn-primary" id="doLoginBtn">ACCEDI</button>
+      <button class="big" id="cancelLoginBtn">ANNULLA</button>
+    </div>
+  </dialog>
 
-<script>
-const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sourceType:'sheet', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K', localSheetData: null };
+  <script>
+    const $ = id => document.getElementById(id);
+    const DEFAULTS = {
+      scriptUrl: '',
+      token: '',
+      spreadsheetId: '',
+      sourceType: 'sheet',
+      barcodeColumn: 'E',
+      nameColumn: 'C',
+      descColumn: 'F',
+      photoColumn: 'P',
+      activeQtyColumn: 'K',
+      localSheetData: null
+    };
 
-let settings = loadSettings();
-let role = localStorage.getItem('role') || 'MAGAZZINIERE';
-let columnsMeta = [];
-let currentProduct = null;
-let historyStack = [];
-let lastScan = { code:null, time:0 };
-let scanner = null;
-let autoQueue = [];
-let autoIndex = 0;
-let autoMode = false;
+    let settings = loadSettings();
+    let role = localStorage.getItem('role') || 'MAGAZZINIERE';
+    let columnsMeta = [];
+    let currentProduct = null;
+    let historyStack = [];
+    let lastScan = { code: null, time: 0 };
+    let scanner = null;
+    let autoQueue = [];
+    let autoIndex = 0;
+    let autoMode = false;
 
-function normalizeSpreadsheetId(value){
-  if(!value) return '';
-  const raw = String(value).trim();
-  if(!raw) return '';
-
-  const drivePatterns = [
-    /(?:https?:\/\/)?drive\.google\.com\/file\/d\/([a-z0-9_-]{10,})/i,
-    /(?:https?:\/\/)?drive\.google\.com\/d\/([a-z0-9_-]{10,})/i,
-    /(?:https?:\/\/)?drive\.google\.com\/open\?id=([a-z0-9_-]{10,})/i,
-    /(?:[?&]id=)([a-z0-9_-]{10,})/i,
-    /(?:https?:\/\/)?docs\.google\.com\/spreadsheets\/d\/([a-z0-9_-]{10,})/i,
-    /(?:https?:\/\/)?docs\.google\.com\/d\/([a-z0-9_-]{10,})/i,
-    /(?:https?:\/\/)?spreadsheets\.google\.com\/d\/([a-z0-9_-]{10,})/i,
-    /key=([a-z0-9_-]+)/i,
-    /^([a-z0-9_-]{10,})$/i
-  ];
-
-  for (const pattern of drivePatterns) {
-    const m = raw.match(pattern);
-    if (m && m[1]) return m[1];
-  }
-
-  try {
-    const u = new URL(raw);
-    const path = (u.pathname || '').toLowerCase();
-    const host = (u.hostname || '').toLowerCase();
-    if (host.includes('docs.google.com') || host.includes('drive.google.com')) {
-      const m = path.match(/\/spreadsheets\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/file\/d\/([a-z0-9_-]{10,})/i);
-      if (m && m[1]) return m[1];
-      const qid = u.searchParams.get('id');
-      if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
-    }
-  } catch (e) {}
-
-  return raw;
-}
-
-function detectSourceType(value){
-  const raw = (value || '').trim();
-  if (!raw) return 'sheet';
-  const low = raw.toLowerCase();
-  if (low.includes('drive.google.com') || low.includes('/file/d/') || (low.includes('/d/') && low.includes('drive.google.com'))) return 'drive';
-  if (low.includes('docs.google.com/spreadsheets') || low.includes('/spreadsheets/d/')) return 'sheet';
-  return 'sheet';
-}
-
-function loadSettings(){
-  try {
-    const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
-    const normalized = Object.assign({}, DEFAULTS, parsed);
-    const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
-    if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
-    normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
-    normalized.localSheetData = parsed.localSheetData || normalized.localSheetData || null;
-    return normalized;
-  } catch(e) {
-    return Object.assign({}, DEFAULTS);
-  }
-}
-
-function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
-
-function isAppsScriptUrl(url){
-  if(!url) return false;
-  try {
-    const u = new URL(url);
-    const host = (u.hostname || '').toLowerCase();
-    const path = (u.pathname || '').toLowerCase();
-    return host.includes('script.google.com') && /(?:\/exec|\/dev)(?:[?#]|$)/.test(path);
-  } catch (e) {
-    return false;
-  }
-}
-
-function columnLetterFromIndex(index){
-  let n = index + 1;
-  let letters = '';
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
-function columnIndexFromLetter(letter){
-  const name = (letter || '').toUpperCase().replace(/[^A-Z]/g,'');
-  if(!name) return -1;
-  let value = 0;
-  for (let i = 0; i < name.length; i++) {
-    value = value * 26 + (name.charCodeAt(i) - 64);
-  }
-  return value - 1;
-}
-
-function spreadsheetBaseUrl(sheetId){
-  return `https://docs.google.com/spreadsheets/d/${sheetId}`;
-}
-
-function googleSheetGvizUrl(sheetId, sheetName){
-  const name = (sheetName || '').trim();
-  const base = spreadsheetBaseUrl(sheetId) + '/gviz/tq?tqx=out:json';
-  return name ? `${base}&sheet=${encodeURIComponent(name)}` : `${base}&sheet=${encodeURIComponent('Foglio1')}`;
-}
-
-function googleSheetCsvUrl(sheetId){
-  return `${spreadsheetBaseUrl(sheetId)}/export?format=csv&gid=0`;
-}
-
-function googleDriveCsvUrl(fileId){
-  return `https://drive.google.com/uc?export=download&id=${fileId}`;
-}
-
-function parseGoogleSheetResponse(text){
-  const normalized = (text || '').trim();
-  if (!normalized) return { headers: [], rows: [] };
-
-  try {
-    const cleaned = normalized
-      .replace(/^\s*\]\s*}'\s*/i, '')
-      .replace(/^\s*\/\*.*?\*\/\s*/s, '')
-      .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
-      .replace(/\)\s*;?\s*$/, '');
-    const payload = JSON.parse(cleaned);
-    const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
-    const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
-    const headers = cols.map(c => (c && (c.label || c.id)) || '');
-    const data = rows.map(r => {
-      const values = r && r.c ? r.c : [];
-      const row = {};
-      headers.forEach((header, index) => {
-        row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
-      });
-      return row;
-    });
-    return { headers, rows: data };
-  } catch (e) {
-    throw new Error('Risposta JSON del foglio Google non valida.');
-  }
-}
-
-function parseCsvRows(text){
-  const rows = [];
-  let current = '';
-  let row = [];
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-    if (ch === '"') {
-      if (inQuotes && next === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
+    function normalizeSpreadsheetId(value) {
+      if (!value) return '';
+      const raw = String(value).trim();
+      if (!raw) return '';
+      const patterns = [
+        /(?:https?:\/\/)?drive\.google\.com\/file\/d\/([a-z0-9_-]{10,})/i,
+        /(?:https?:\/\/)?drive\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+        /(?:https?:\/\/)?drive\.google\.com\/open\?id=([a-z0-9_-]{10,})/i,
+        /(?:[?&]id=)([a-z0-9_-]{10,})/i,
+        /(?:https?:\/\/)?docs\.google\.com\/spreadsheets\/d\/([a-z0-9_-]{10,})/i,
+        /(?:https?:\/\/)?docs\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+        /(?:https?:\/\/)?spreadsheets\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+        /key=([a-z0-9_-]+)/i,
+        /^([a-z0-9_-]{10,})$/i
+      ];
+      for (const pattern of patterns) {
+        const match = raw.match(pattern);
+        if (match && match[1]) return match[1];
       }
-    } else if (ch === ',' && !inQuotes) {
-      row.push(current);
-      current = '';
-    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
-      if (ch === '\r' && next === '\n') i++;
-      row.push(current);
-      if (row.some(cell => cell !== '')) rows.push(row);
-      row = [];
-      current = '';
-    } else {
-      current += ch;
+      try {
+        const u = new URL(raw);
+        const host = (u.hostname || '').toLowerCase();
+        const path = (u.pathname || '').toLowerCase();
+        if (host.includes('docs.google.com') || host.includes('drive.google.com')) {
+          const m = path.match(/\/spreadsheets\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/file\/d\/([a-z0-9_-]{10,})/i);
+          if (m && m[1]) return m[1];
+          const qid = u.searchParams.get('id');
+          if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
+        }
+      } catch (e) {}
+      return raw;
     }
-  }
-  if (current.length || row.length) {
-    row.push(current);
-    if (row.some(cell => cell !== '')) rows.push(row);
-  }
-  return rows;
-}
 
-function buildColumnsMeta(headers){
-  const palette = ['#4CAF50','#FF9800','#2196F3','#9C27B0','#E91E63','#00BCD4','#795548','#607D8B'];
-  return headers.map((header, index) => ({
-    letter: columnLetterFromIndex(index),
-    header: header || ('Colonna ' + columnLetterFromIndex(index)),
-    color: palette[index % palette.length]
-  }));
-}
+    function detectSourceType(value) {
+      const raw = (value || '').trim();
+      if (!raw) return 'sheet';
+      const low = raw.toLowerCase();
+      if (low.includes('drive.google.com') || low.includes('/file/d/') || (low.includes('/d/') && low.includes('drive.google.com'))) return 'drive';
+      if (low.includes('docs.google.com/spreadsheets') || low.includes('/spreadsheets/d/')) return 'sheet';
+      return 'sheet';
+    }
 
-function getHeaderIndexByColumnSpec(columnSpec, headers){
-  if (!columnSpec) return -1;
-  const text = String(columnSpec).trim();
-  if (!text) return -1;
-  const idx = columnIndexFromLetter(text);
-  if (idx >= 0) return idx;
-  const normalized = text.toLowerCase();
-  return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
-}
-
-function toNumber(value){
-  if (value === null || value === undefined || value === '') return 0;
-  const txt = String(value).trim().replace('.', '').replace(',', '.');
-  const parsed = Number(txt);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
-function beep(long){ try{
-  const ctx=new (window.AudioContext||window.webkitAudioContext)();
-  const o=ctx.createOscillator(), g=ctx.createGain();
-  o.connect(g); g.connect(ctx.destination); o.type='sine';
-  o.frequency.value = long?880:660;
-  g.gain.setValueAtTime(0.3, ctx.currentTime);
-  o.start(); o.stop(ctx.currentTime+(long?0.5:0.15));
-}catch(e){} }
-function vibrate(long){ if(navigator.vibrate) navigator.vibrate(long?[300,100,300]:150); }
-function showMsg(t,isErr){ const m=$('msg'); m.textContent=t||''; m.className='msg'+(isErr?' err':''); }
-
-function normalizeDriveFileUrl(raw){
-  if(!raw) return '';
-  const value = raw.trim();
-  if(!value) return '';
-  const googleId = value.match(/(?:\/d\/|id=)([a-z0-9_-]{10,})/i);
-  if(googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
-  if(/^https?:\/\//i.test(value)) return value;
-  if(/^[a-z0-9_-]{10,}$/i.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
-  return value;
-}
-
-function blobToBase64(blob){
-  return new Promise((resolve,reject)=>{
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function readPhotoSource(){
-  const file = $('fPhoto').files[0];
-  const driveValue = $('fPhotoDrive').value.trim();
-
-  if(file){
-    if(file.size > 4 * 1024 * 1024){ throw new Error('Foto troppo grande (max 4 MB)'); }
-    const b64 = await blobToBase64(file);
-    return { photoBase64: b64.split(',')[1], photoMime: file.type || 'image/jpeg', photoName: file.name };
-  }
-
-  if(driveValue){
-    const url = normalizeDriveFileUrl(driveValue);
-    const response = await fetch(url, { mode: 'cors' });
-    if(!response.ok) throw new Error('Impossibile leggere il file da Google Drive.');
-    const blob = await response.blob();
-    const b64 = await blobToBase64(blob);
-    return { photoBase64: b64.split(',')[1], photoMime: blob.type || 'image/jpeg', photoName: 'drive-file' };
-  }
-
-  return null;
-}
-
-function commonParams(){
-  return {
-    token: settings.token,
-    spreadsheetId: settings.spreadsheetId,
-    sourceType: settings.sourceType || 'sheet',
-    barcodeColumn: settings.barcodeColumn,
-    nameColumn: settings.nameColumn,
-    descColumn: settings.descColumn,
-    photoColumn: settings.photoColumn,
-    qtyColumn: settings.activeQtyColumn
-  };
-}
-
-function localSheetFetch(params){
-  const data = settings.localSheetData || JSON.parse(localStorage.getItem('localSheetData') || 'null');
-  if (!data || !Array.isArray(data.rows)) {
-    return { ok:false, error:'Nessun file locale caricato.' };
-  }
-
-  const headers = data.headers || [];
-  const rows = data.rows || [];
-
-  if (params.action === 'meta') {
-    return { ok:true, columns: buildColumnsMeta(headers) };
-  }
-
-  if (params.action === 'getProduct') {
-    const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-    const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-    const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-    const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-    const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-    const targetCode = String(params.barcode || '').trim();
-
-    const productRow = rows.find(row => {
-      const values = headers.map(h => row[h] ?? '');
-      const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
-      return codeValue === targetCode;
-    });
-
-    if (!productRow) return { ok:true, product:null };
-
-    const values = headers.map(h => productRow[h] ?? '');
-    return { ok:true, product: {
-      barcode: String(values[barcodeIndex] ?? ''),
-      name: String(values[nameIndex] ?? ''),
-      description: String(values[descIndex] ?? ''),
-      photoUrl: String(values[photoIndex] ?? ''),
-      quantity: toNumber(values[qtyIndex]),
-      qtyColumn: params.qtyColumn
-    } };
-  }
-
-  if (params.action === 'listProductsForColumn') {
-    const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-    const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-    const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-    const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-    const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-
-    const products = [];
-    rows.forEach((row, rowIndex) => {
-      const values = headers.map(h => row[h] ?? '');
-      const barcode = String(values[barcodeIndex] ?? '').trim();
-      const qty = toNumber(values[qtyIndex]);
-      if (!barcode || qty <= 0) return;
-      products.push({
-        barcode,
-        name: String(values[nameIndex] ?? ''),
-        description: String(values[descIndex] ?? ''),
-        photoUrl: String(values[photoIndex] ?? ''),
-        quantity: qty,
-        qtyColumn: params.qtyColumn,
-        rowIndex
-      });
-    });
-    return { ok:true, products };
-  }
-
-  return { ok:false, error:'Azione non supportata per file locale.' };
-}
-
-async function fetchGoogleSheetData(url, label){
-  const res = await fetch(url, { cache: 'no-store' });
-  const text = await res.text();
-  if(!res.ok) {
-    throw new Error(label + ' non raggiungibile: ' + res.status + ' ' + res.statusText);
-  }
-  const trimmed = (text || '').trim();
-  if (!trimmed) {
-    throw new Error(label + ' ha restituito un contenuto vuoto.');
-  }
-  if (/^<!doctype html|^<html|text\/html/i.test(trimmed) || trimmed.toLowerCase().includes('<html')) {
-    throw new Error('Il foglio non è pubblico oppure l’ID del foglio è errato.');
-  }
-  return text;
-}
-
-async function directSheetFetch(params){
-  if(!settings.spreadsheetId){
-    return { ok:false, error:'ID foglio Google mancante.' };
-  }
-
-  const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
-  const sourceType = (settings.sourceType || detectSourceType(settings.spreadsheetId || ''));
-
-  const urls = [];
-  if (sourceType === 'drive') {
-    urls.push(googleDriveCsvUrl(sheetId));
-  } else {
-    urls.push(googleSheetCsvUrl(sheetId));
-    urls.push(googleSheetGvizUrl(sheetId, 'Foglio1'));
-  }
-
-  let lastError = null;
-
-  for (const url of urls) {
-    try {
-      const text = await fetchGoogleSheetData(url, 'Foglio Google');
-      let headers = [];
-      let rows = [];
-
-      if (url.includes('/gviz/')) {
-        const parsed = parseGoogleSheetResponse(text);
-        headers = parsed.headers;
-        rows = parsed.rows;
-      } else {
-        const csvRows = parseCsvRows(text);
-        if (!csvRows.length) throw new Error('Il foglio CSV è vuoto.');
-        headers = csvRows[0].map((h, idx) => (h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
-        rows = csvRows.slice(1).map(values => {
-          const row = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] !== undefined ? values[index].trim() : '';
-          });
-          return row;
-        });
+    function loadSettings() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('settings') || '{}');
+        const normalized = Object.assign({}, DEFAULTS, parsed);
+        const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
+        if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
+        normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
+        normalized.localSheetData = parsed.localSheetData || normalized.localSheetData || null;
+        return normalized;
+      } catch (e) {
+        return Object.assign({}, DEFAULTS);
       }
+    }
+
+    function saveSettings() {
+      localStorage.setItem('settings', JSON.stringify(settings));
+    }
+
+    function isAppsScriptUrl(url) {
+      if (!url) return false;
+      try {
+        const u = new URL(url);
+        const host = (u.hostname || '').toLowerCase();
+        const path = (u.pathname || '').toLowerCase();
+        return host.includes('script.google.com') && /(?:\/exec|\/dev)(?:[?#]|$)/.test(path);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function columnLetterFromIndex(index) {
+      let n = index + 1;
+      let letters = '';
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        letters = String.fromCharCode(65 + rem) + letters;
+        n = Math.floor((n - 1) / 26);
+      }
+      return letters;
+    }
+
+    function columnIndexFromLetter(letter) {
+      const name = (letter || '').toUpperCase().replace(/[^A-Z]/g, '');
+      if (!name) return -1;
+      let value = 0;
+      for (let i = 0; i < name.length; i++) {
+        value = value * 26 + (name.charCodeAt(i) - 64);
+      }
+      return value - 1;
+    }
+
+    function buildColumnsMeta(headers) {
+      const palette = ['#4CAF50','#FF9800','#2196F3','#9C27B0','#E91E63','#00BCD4','#795548','#607D8B'];
+      return headers.map((header, index) => ({
+        letter: columnLetterFromIndex(index),
+        header: header || ('Colonna ' + columnLetterFromIndex(index)),
+        color: palette[index % palette.length]
+      }));
+    }
+
+    function getHeaderIndexByColumnSpec(spec, headers) {
+      if (!spec) return -1;
+      const text = String(spec).trim();
+      if (!text) return -1;
+      const idx = columnIndexFromLetter(text);
+      if (idx >= 0) return idx;
+      const normalized = text.toLowerCase();
+      return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
+    }
+
+    function toNumber(value) {
+      if (value === null || value === undefined || value === '') return 0;
+      const txt = String(value).trim().replace('.', '').replace(',', '.');
+      const parsed = Number(txt);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function speak(t) {
+      try {
+        const u = new SpeechSynthesisUtterance(t);
+        u.lang = 'it-IT';
+        speechSynthesis.cancel();
+        speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+
+    function beep(long) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'sine';
+        o.frequency.value = long ? 880 : 660;
+        g.gain.setValueAtTime(0.3, ctx.currentTime);
+        o.start(); o.stop(ctx.currentTime + (long ? 0.5 : 0.15));
+      } catch (e) {}
+    }
+
+    function vibrate(long) {
+      if (navigator.vibrate) navigator.vibrate(long ? [300,100,300] : 150);
+    }
+
+    function showMsg(text, isErr) {
+      const m = $('msg');
+      m.textContent = text || '';
+      m.className = 'msg' + (isErr ? ' err' : '');
+    }
+
+    function normalizeDriveFileUrl(raw) {
+      if (!raw) return '';
+      const value = raw.trim();
+      if (!value) return '';
+      const googleId = value.match(/(?:\/d\/|id=)([a-z0-9_-]{10,})/i);
+      if (googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
+      if (/^https?:\/\//i.test(value)) return value;
+      if (/^[a-z0-9_-]{10,}$/i.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
+      return value;
+    }
+
+    function parseCsvRows(text) {
+      const rows = [];
+      let current = '';
+      let row = [];
+      let inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (ch === '"') {
+          if (inQuotes && next === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === ',' && !inQuotes) {
+          row.push(current);
+          current = '';
+        } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+          if (ch === '\r' && next === '\n') i++;
+          row.push(current);
+          if (row.some(cell => cell !== '')) rows.push(row);
+          row = [];
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      if (current.length || row.length) {
+        row.push(current);
+        if (row.some(cell => cell !== '')) rows.push(row);
+      }
+      return rows;
+    }
+
+    function commonParams() {
+      return {
+        token: settings.token,
+        spreadsheetId: settings.spreadsheetId,
+        sourceType: settings.sourceType || 'sheet',
+        barcodeColumn: settings.barcodeColumn,
+        nameColumn: settings.nameColumn,
+        descColumn: settings.descColumn,
+        photoColumn: settings.photoColumn,
+        qtyColumn: settings.activeQtyColumn
+      };
+    }
+
+    function localSheetFetch(params) {
+      const data = settings.localSheetData || JSON.parse(localStorage.getItem('localSheetData') || 'null');
+      if (!data || !Array.isArray(data.rows)) return { ok: false, error: 'Nessun file locale caricato.' };
+      const headers = data.headers || [];
+      const rows = data.rows || [];
 
       if (params.action === 'meta') {
-        return { ok:true, columns: buildColumnsMeta(headers) };
+        return { ok: true, columns: buildColumnsMeta(headers) };
       }
 
       if (params.action === 'getProduct') {
@@ -550,25 +382,21 @@ async function directSheetFetch(params){
         const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
         const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
         const targetCode = String(params.barcode || '').trim();
-
-        const productRow = rows.find(row => {
-          const values = headers.map(h => row[h] ?? '');
+        const row = rows.find(r => {
+          const values = headers.map(h => r[h] ?? '');
           const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
           return codeValue === targetCode;
         });
-
-        if(!productRow) return { ok:true, product:null };
-
-        const values = headers.map(h => productRow[h] ?? '');
-        const product = {
-          barcode: String(values[barcodeIndex] ?? ''),
-          name: String(values[nameIndex] ?? ''),
-          description: String(values[descIndex] ?? ''),
-          photoUrl: String(values[photoIndex] ?? ''),
+        if (!row) return { ok: true, product: null };
+        const values = headers.map(h => row[h] ?? '');
+        return { ok: true, product: {
+          barcode: String(values[barcodeIndex] || ''),
+          name: String(values[nameIndex] || ''),
+          description: String(values[descIndex] || ''),
+          photoUrl: String(values[photoIndex] || ''),
           quantity: toNumber(values[qtyIndex]),
           qtyColumn: params.qtyColumn
-        };
-        return { ok:true, product };
+        }};
       }
 
       if (params.action === 'listProductsForColumn') {
@@ -577,517 +405,644 @@ async function directSheetFetch(params){
         const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
         const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
         const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-
         const products = [];
         rows.forEach((row, rowIndex) => {
           const values = headers.map(h => row[h] ?? '');
-          const barcode = String(values[barcodeIndex] ?? '').trim();
+          const barcode = String(values[barcodeIndex] || '').trim();
           const qty = toNumber(values[qtyIndex]);
           if (!barcode || qty <= 0) return;
           products.push({
             barcode,
-            name: String(values[nameIndex] ?? ''),
-            description: String(values[descIndex] ?? ''),
-            photoUrl: String(values[photoIndex] ?? ''),
+            name: String(values[nameIndex] || ''),
+            description: String(values[descIndex] || ''),
+            photoUrl: String(values[photoIndex] || ''),
             quantity: qty,
             qtyColumn: params.qtyColumn,
             rowIndex
           });
         });
-
-        return { ok:true, products };
+        return { ok: true, products };
       }
 
-      return { ok:false, error:'Azione non supportata.' };
-    } catch (err) {
-      lastError = err;
-      continue;
+      return { ok: false, error: 'Azione non supportata per file locale.' };
     }
-  }
 
-  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio. Verifica ID e permessi del file.' };
-}
-
-async function apiGet(params){
-  if (settings.sourceType === 'local' && settings.localSheetData) {
-    return localSheetFetch(params);
-  }
-
-  if (settings.scriptUrl && isAppsScriptUrl(settings.scriptUrl)) {
-    const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
-    const sep = settings.scriptUrl.includes('?') ? '&' : '?';
-    const url = settings.scriptUrl + sep + q;
-    const r = await fetch(url);
-    const text = await r.text();
-    if(!text) return { ok:false, error:'Nessuna risposta dal server.' };
-    const ct = (r.headers.get('content-type') || '').toLowerCase();
-    const trimmed = text.trim();
-    const looksLikeHtml = trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || ct.includes('text/html');
-    if(looksLikeHtml){
-      throw new Error('Il link inserito non è un endpoint JSON di Apps Script: usa un Web App con /exec oppure lascia vuoto il campo e usa direttamente il foglio Google.');
-    }
-    try { return JSON.parse(text); }
-    catch(e) {
-      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
-      throw new Error('Risposta non JSON dal backend. Dettaglio: ' + preview);
-    }
-  }
-
-  if (settings.spreadsheetId) {
-    return await directSheetFetch(params);
-  }
-
-  if (settings.localSheetData) {
-    return localSheetFetch(params);
-  }
-
-  throw new Error('Inserisci un link Drive, un ID del foglio Google oppure carica un file locale.');
-}
-
-function loadMeta(){
-  if(!settings.spreadsheetId && !settings.scriptUrl && !settings.localSheetData){
-    showMsg('Vai in IMPOSTAZIONI e inserisci l\'ID del foglio Google, il link Drive o carica un file locale.', true);
-    return;
-  }
-  apiGet(Object.assign({action:'meta'}, commonParams()))
-    .then(res=>{
-      if(res.ok){
-        columnsMeta = res.columns || [];
-        renderColIndicator();
-        renderColList();
-      } else {
-        showMsg(res.error || 'Errore nel caricamento del foglio', true);
+    async function fetchGoogleSheetData(url, label) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const text = await res.text();
+      if (!res.ok) throw new Error(label + ' non raggiungibile: ' + res.status + ' ' + res.statusText);
+      const trimmed = (text || '').trim();
+      if (!trimmed) throw new Error(label + ' ha restituito un contenuto vuoto.');
+      if (/^<!doctype html|^<html|text\/html/i.test(trimmed) || trimmed.toLowerCase().includes('<html')) {
+        throw new Error('Il foglio non è pubblico oppure l’ID del foglio è errato.');
       }
-    })
-    .catch(e=>showMsg('Errore collegamento: '+e.message,true));
-}
-
-function startScanner(){
-  if(scanner) return;
-  if(typeof Html5Qrcode==='undefined'){ showMsg('Libreria scanner non caricata: serve connessione internet.',true); return; }
-  let formats;
-  try{ formats=[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,
-    Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,
-    Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,
-    Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.QR_CODE]; }catch(e){ formats=undefined; }
-  scanner = formats ? new Html5Qrcode('camera',{formatsToSupport:formats}) : new Html5Qrcode('camera');
-  scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:160}},onScan,()=>{})
-    .catch(err=>{ showMsg('Fotocamera non disponibile: '+err,true); scanner=null; });
-}
-function stopScanner(){ if(scanner){ const s=scanner; scanner=null; s.stop().then(()=>s.clear()).catch(()=>{}); } }
-
-function onScan(code){
-  const now=Date.now();
-  if(code===lastScan.code && now-lastScan.time<1500) return;
-  lastScan={code,time:now};
-  handleBarcode(code);
-}
-
-function renderQueueList(){
-  const queueBox = $('productQueueList');
-  const content = $('queueContent');
-  if (!autoQueue.length) {
-    queueBox.classList.add('hidden');
-    content.innerHTML = '';
-    return;
-  }
-  queueBox.classList.remove('hidden');
-  content.innerHTML = autoQueue.map((p, idx) => {
-    const isCurrent = idx === autoIndex;
-    const qty = Number(p.quantity) || 0;
-    return `
-      <div class="queue-item ${isCurrent ? 'current' : ''}">
-        <span>${idx + 1}. ${p.name || 'Prodotto'}</span>
-        <strong>${qty}</strong>
-      </div>
-    `;
-  }).join('');
-}
-
-function finishAutoSequence(){
-  autoMode = false;
-  autoQueue = [];
-  autoIndex = 0;
-  currentProduct = null;
-  renderQueueList();
-  $('productCard').classList.add('hidden');
-  showMsg('FINE LAVORO');
-  speak('Fine lavoro');
-  beep(true);
-  vibrate(true);
-}
-
-function showNextAutoProduct(){
-  if (!autoQueue.length) {
-    finishAutoSequence();
-    return;
-  }
-  if (autoIndex >= autoQueue.length) {
-    finishAutoSequence();
-    return;
-  }
-
-  const product = autoQueue[autoIndex];
-  currentProduct = product;
-  renderProduct(product, product.quantity);
-  renderQueueList();
-  showMsg(`Prodotto ${autoIndex + 1} di ${autoQueue.length}: ${product.name || 'Prodotto'} - ${product.quantity} pezzi`);
-  speak(`Prodotto ${autoIndex + 1} di ${autoQueue.length} ${product.name || 'Prodotto'} con ${product.quantity} pezzi`);
-}
-
-async function startColumnSequence(){
-  if (!settings.spreadsheetId && !settings.localSheetData) {
-    showMsg('Inserisci prima il foglio Google, il link Drive o carica un file locale.', true);
-    return;
-  }
-
-  showMsg('Carico prodotti della colonna...');
-  try {
-    const res = await apiGet(Object.assign({ action: 'listProductsForColumn' }, commonParams()));
-    if (!res.ok) {
-      showMsg(res.error || 'Errore nella lettura del foglio', true);
-      return;
+      return text;
     }
 
-    const items = (res.products || [])
-      .filter(p => (p.barcode || '').trim())
-      .filter(p => Number(p.quantity) > 0)
-      .map(p => ({ ...p }));
-
-    if (!items.length) {
-      autoQueue = [];
-      autoMode = false;
-      autoIndex = 0;
-      renderQueueList();
-      showMsg('Nessun prodotto con quantità valida in questa colonna.', true);
-      speak('Nessun prodotto nella colonna');
-      return;
-    }
-
-    autoQueue = items;
-    autoIndex = 0;
-    autoMode = true;
-    renderQueueList();
-    showNextAutoProduct();
-    showMsg('Colonna avviata. Inquadra il codice del prodotto corrente.', false);
-  } catch (e) {
-    autoQueue = [];
-    autoMode = false;
-    autoIndex = 0;
-    renderQueueList();
-    showMsg('Errore caricamento colonna: ' + e.message, true);
-    speak('Errore caricamento colonna');
-  }
-}
-
-function canProcessCurrentProduct(code){
-  if (!autoMode || !autoQueue.length) return true;
-  const current = autoQueue[autoIndex];
-  if (!current) return true;
-  return String(code).trim() === String(current.barcode || '').trim();
-}
-
-function processAutoProductMatch(code){
-  if (!autoMode || !autoQueue.length) return true;
-  const current = autoQueue[autoIndex];
-  if (!current) {
-    finishAutoSequence();
-    return false;
-  }
-  if (String(code).trim() !== String(current.barcode || '').trim()) {
-    showMsg('Codice sbagliato: serve ' + (current.name || current.barcode), true);
-    speak('Codice sbagliato');
-    beep(true);
-    return false;
-  }
-  return true;
-}
-
-function handleBarcode(code){
-  const normalizedCode = String(code || '').trim();
-  showMsg('Ricerca: ' + normalizedCode + ' ...');
-
-  if (autoMode && !processAutoProductMatch(normalizedCode)) {
-    return;
-  }
-
-  apiGet(Object.assign({action:'getProduct',barcode:normalizedCode}, commonParams()))
-    .then(res=>{
-      if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
-      if(!res.product){
-        showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return;
+    function parseGoogleSheetResponse(text) {
+      const normalized = (text || '').trim();
+      if (!normalized) return { headers: [], rows: [] };
+      try {
+        const cleaned = normalized
+          .replace(/^\s*\]\s*}'\s*/i, '')
+          .replace(/^\s*\/\*.*?\*\/\s*/s, '')
+          .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
+          .replace(/\)\s*;?\s*$/, '');
+        const payload = JSON.parse(cleaned);
+        const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
+        const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
+        const headers = cols.map(c => (c && (c.label || c.id)) || '');
+        const data = rows.map(r => {
+          const values = r && r.c ? r.c : [];
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
+          });
+          return row;
+        });
+        return { headers, rows: data };
+      } catch (e) {
+        throw new Error('Risposta JSON del foglio Google non valida.');
       }
+    }
 
-      const p = res.product;
-      currentProduct = p;
-      const key='count_'+p.barcode+'_'+p.qtyColumn;
-      const stored=localStorage.getItem(key);
-      const before = stored===null ? p.quantity : parseInt(stored,10) || p.quantity;
-      const remaining = Math.max(before - 1, 0);
-      localStorage.setItem(key, String(remaining));
-      historyStack.push({key, before});
-      renderProduct(p, remaining);
+    async function directSheetFetch(params) {
+      if (!settings.spreadsheetId) return { ok: false, error: 'ID foglio Google mancante.' };
+      const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
+      const sourceType = settings.sourceType || detectSourceType(settings.spreadsheetId || '');
+      const urls = sourceType === 'drive'
+        ? [`https://drive.google.com/uc?export=download&id=${sheetId}`]
+        : [`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`, `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent('Foglio1')}`];
 
-      if (autoMode) {
-        if (remaining === 0) {
-          showMsg('RIGA COMPLETATA: ' + (p.name || 'Prodotto') + '. Passo al successivo.', false);
-          speak('Riga completata');
-          beep(true);
-          vibrate(true);
-          autoIndex += 1;
-          renderQueueList();
-          setTimeout(() => {
-            if (autoIndex >= autoQueue.length) {
-              finishAutoSequence();
-              return;
-            }
-            showNextAutoProduct();
-          }, 900);
-          return;
+      let lastError = null;
+      for (const url of urls) {
+        try {
+          const text = await fetchGoogleSheetData(url, 'Foglio Google');
+          let headers = [];
+          let rows = [];
+          if (url.includes('/gviz/')) {
+            const parsed = parseGoogleSheetResponse(text);
+            headers = parsed.headers;
+            rows = parsed.rows;
+          } else {
+            const csvRows = parseCsvRows(text);
+            if (!csvRows.length) throw new Error('Il foglio CSV è vuoto.');
+            headers = csvRows[0].map((h, idx) => (h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
+            rows = csvRows.slice(1).map(values => {
+              const row = {};
+              headers.forEach((header, index) => {
+                row[header] = values[index] !== undefined ? values[index].trim() : '';
+              });
+              return row;
+            });
+          }
+          if (params.action === 'meta') return { ok: true, columns: buildColumnsMeta(headers) };
+          if (params.action === 'getProduct') {
+            const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+            const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+            const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+            const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+            const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+            const targetCode = String(params.barcode || '').trim();
+            const productRow = rows.find(row => {
+              const values = headers.map(h => row[h] ?? '');
+              const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
+              return codeValue === targetCode;
+            });
+            if (!productRow) return { ok: true, product: null };
+            const values = headers.map(h => productRow[h] ?? '');
+            return { ok: true, product: {
+              barcode: String(values[barcodeIndex] || ''),
+              name: String(values[nameIndex] || ''),
+              description: String(values[descIndex] || ''),
+              photoUrl: String(values[photoIndex] || ''),
+              quantity: toNumber(values[qtyIndex]),
+              qtyColumn: params.qtyColumn
+            }};
+          }
+          if (params.action === 'listProductsForColumn') {
+            const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+            const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+            const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+            const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+            const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+            const products = [];
+            rows.forEach((row, rowIndex) => {
+              const values = headers.map(h => row[h] ?? '');
+              const barcode = String(values[barcodeIndex] || '').trim();
+              const qty = toNumber(values[qtyIndex]);
+              if (!barcode || qty <= 0) return;
+              products.push({
+                barcode,
+                name: String(values[nameIndex] || ''),
+                description: String(values[descIndex] || ''),
+                photoUrl: String(values[photoIndex] || ''),
+                quantity: qty,
+                qtyColumn: params.qtyColumn,
+                rowIndex
+              });
+            });
+            return { ok: true, products };
+          }
+          return { ok: false, error: 'Azione non supportata.' };
+        } catch (err) {
+          lastError = err;
         }
+      }
+      return { ok: false, error: lastError ? lastError.message : 'Impossibile leggere il foglio. Verifica ID e permessi del file.' };
+    }
 
-        showMsg('Mancano ' + remaining + ' per ' + (p.name || 'Prodotto'));
-        speak('Mancano ' + remaining);
-        beep(false);
-        vibrate(false);
+    async function apiGet(params) {
+      if (settings.sourceType === 'local' && settings.localSheetData) {
+        return localSheetFetch(params);
+      }
+      if (settings.scriptUrl && isAppsScriptUrl(settings.scriptUrl)) {
+        const q = Object.entries(params).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+        const sep = settings.scriptUrl.includes('?') ? '&' : '?';
+        const url = settings.scriptUrl + sep + q;
+        const r = await fetch(url);
+        const text = await r.text();
+        if (!text) return { ok: false, error: 'Nessuna risposta dal server.' };
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        const looksHtml = text.trim().startsWith('<!doctype html') || text.trim().startsWith('<html') || ct.includes('text/html');
+        if (looksHtml) throw new Error('Il link inserito non è un endpoint JSON di Apps Script.');
+        try { return JSON.parse(text); }
+        catch (e) { throw new Error('Risposta non JSON dal backend.'); }
+      }
+      if (settings.spreadsheetId) return await directSheetFetch(params);
+      if (settings.localSheetData) return localSheetFetch(params);
+      throw new Error('Inserisci un link Drive, un ID del foglio Google oppure carica un file locale.');
+    }
+
+    function renderColIndicator() {
+      const col = columnsMeta.find(c => c.letter === settings.activeQtyColumn);
+      $('colIndicator').innerHTML = 'COLONNA: ' + settings.activeQtyColumn +
+        (col ? ' <span class="swatch" style="background:' + col.color + '"></span> ' + col.header : '');
+    }
+
+    function renderColList() {
+      const c = $('colList');
+      c.innerHTML = '';
+      if (!columnsMeta.length) {
+        c.innerHTML = '<p>Nessuna colonna caricata. Controlla le impostazioni.</p>';
+        return;
+      }
+      columnsMeta.forEach(col => {
+        const div = document.createElement('div');
+        div.className = 'colitem' + (col.letter === settings.activeQtyColumn ? ' sel' : '');
+        div.innerHTML = '<span class="swatch" style="background:' + col.color + '"></span><b>' + col.letter + '</b>&nbsp;-&nbsp;' + (col.header || '(senza nome)');
+        div.onclick = () => {
+          settings.activeQtyColumn = col.letter;
+          saveSettings();
+          renderColIndicator();
+          renderColList();
+          showMsg('Colonna attiva: ' + col.letter);
+          if (role === 'GESTORE') {
+            startColumnSequence();
+          }
+        };
+        c.appendChild(div);
+      });
+    }
+
+    function fillSettingsForm() {
+      $('sSheet').value = settings.spreadsheetId;
+      $('sBarcodeCol').value = settings.barcodeColumn;
+      $('sNameCol').value = settings.nameColumn;
+      $('sDescCol').value = settings.descColumn;
+      $('sPhotoCol').value = settings.photoColumn;
+      $('sQtyCol').value = settings.activeQtyColumn;
+    }
+
+    function resetColumnCounters(column) {
+      const col = String(column || settings.activeQtyColumn || '').trim();
+      if (!col) return;
+      Object.keys(localStorage)
+        .filter(key => key.startsWith('count_') && key.endsWith('_' + col))
+        .forEach(key => localStorage.removeItem(key));
+      historyStack = historyStack.filter(entry => !String(entry.key || '').endsWith('_' + col));
+    }
+
+    function clearAutoQueueState() {
+      autoQueue = [];
+      autoIndex = 0;
+      autoMode = false;
+      currentProduct = null;
+      renderQueueList();
+      $('productCard').classList.add('hidden');
+    }
+
+    function renderQueueList() {
+      const box = $('productQueueList');
+      const content = $('queueContent');
+      if (!autoQueue.length) {
+        box.classList.add('hidden');
+        content.innerHTML = '';
+        return;
+      }
+      box.classList.remove('hidden');
+      content.innerHTML = autoQueue.map((p, idx) => {
+        const isCurrent = idx === autoIndex;
+        const qty = Number(p.quantity) || 0;
+        return `
+          <div class="queue-item ${isCurrent ? 'current' : ''}">
+            <span>${idx + 1}. ${p.name || 'Prodotto'}</span>
+            <strong>${qty}</strong>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function finishAutoSequence() {
+      autoMode = false;
+      autoQueue = [];
+      autoIndex = 0;
+      currentProduct = null;
+      renderQueueList();
+      $('productCard').classList.add('hidden');
+      showMsg('FINE LAVORO');
+      speak('Fine lavoro');
+      beep(true); vibrate(true);
+    }
+
+    function showNextAutoProduct() {
+      if (!autoQueue.length || autoIndex >= autoQueue.length) {
+        finishAutoSequence();
+        return;
+      }
+      const product = autoQueue[autoIndex];
+      currentProduct = product;
+      renderProduct(product, Number(product.quantity) || 0);
+      renderQueueList();
+      showMsg(`Prodotto ${autoIndex + 1} di ${autoQueue.length}: ${product.name || 'Prodotto'} - ${product.quantity} pezzi`);
+      speak(`Prodotto ${autoIndex + 1} di ${autoQueue.length} ${product.name || 'Prodotto'} con ${product.quantity} pezzi`);
+    }
+
+    function renderProduct(p, remaining) {
+      const done = remaining <= 0 && (Number(p.quantity) || 0) > 0;
+      $('productCard').className = 'card ' + (done ? 'done' : 'pending');
+      $('pName').textContent = p.name || 'Prodotto';
+      $('pDesc').textContent = p.description || '';
+      $('pCount').textContent = done ? 'FATTO!' : remaining;
+      $('pLabel').textContent = done ? 'PRODOTTO FINITO' : 'PEZZI RIMANENTI';
+      const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
+      if (photoUrl) {
+        $('pPhoto').src = photoUrl;
+        $('pPhoto').style.display = 'block';
+      } else {
+        $('pPhoto').style.display = 'none';
+      }
+      $('productCard').classList.remove('hidden');
+    }
+
+    async function startColumnSequence() {
+      if (!settings.spreadsheetId && !settings.localSheetData) {
+        showMsg('Inserisci prima il foglio Google, il link Drive o carica un file locale.', true);
         return;
       }
 
-      if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
-      else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
-    })
-    .catch(e=>{ showMsg('Errore: '+e.message,true); speak('Errore di collegamento'); });
-}
+      resetColumnCounters(settings.activeQtyColumn);
+      clearAutoQueueState();
+      showMsg('Carico prodotti della colonna...');
 
-function renderProduct(p,remaining){
-  const done = remaining<=0 && p.quantity>0;
-  $('productCard').className='card '+(done?'done':'pending');
-  $('pName').textContent=p.name||'Prodotto';
-  $('pDesc').textContent=p.description||'';
-  $('pCount').textContent=done?'FATTO!':remaining;
-  $('pLabel').textContent=done?'PRODOTTO FINITO':'PEZZI RIMANENTI';
-  const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
-  if(photoUrl){ $('pPhoto').src=photoUrl; $('pPhoto').style.display='block'; }
-  else $('pPhoto').style.display='none';
-  $('productCard').classList.remove('hidden');
-}
+      try {
+        const res = await apiGet(Object.assign({ action: 'listProductsForColumn' }, commonParams()));
+        if (!res.ok) {
+          showMsg(res.error || 'Errore nella lettura del foglio', true);
+          return;
+        }
 
-$('startWorkBtn').onclick=()=>startColumnSequence();
-$('startColumnBtn').onclick=()=>startColumnSequence();
-$('nextAutoBtn').onclick=()=>{
-  if (!autoQueue.length) {
-    showMsg('Nessuna colonna in esecuzione.', true);
-    return;
-  }
-  autoIndex += 1;
-  if (autoIndex >= autoQueue.length) {
-    finishAutoSequence();
-    return;
-  }
-  showNextAutoProduct();
-};
+        const items = (res.products || [])
+          .filter(p => (p.barcode || '').trim())
+          .filter(p => Number(p.quantity) > 0)
+          .map(p => ({ ...p }));
 
-$('undoBtn').onclick=()=>{
-  if(!historyStack.length){ showMsg('Niente da annullare'); speak('Niente da annullare'); return; }
-  const last=historyStack.pop();
-  localStorage.setItem(last.key,String(last.before));
-  showMsg('Annullato. Riportato a '+last.before); speak('Annullato, mancano '+last.before);
-  if(currentProduct) renderProduct(currentProduct,last.before);
-};
-$('resetColBtn').onclick=()=>{
-  if(!confirm('Ricominciare TUTTA la colonna '+settings.activeQtyColumn+' da zero?')) return;
-  const col=settings.activeQtyColumn;
-  Object.keys(localStorage).filter(k=>k.startsWith('count_')&&k.endsWith('_'+col)).forEach(k=>localStorage.removeItem(k));
-  historyStack=[]; $('productCard').className='card pending hidden';
-  showMsg('Colonna '+col+' azzerata'); speak('Colonna azzerata');
-};
-$('resetAllBtn').onclick=()=>{
-  if(!confirm('Azzerare TUTTI i conteggi di TUTTE le colonne?')) return;
-  Object.keys(localStorage).filter(k=>k.startsWith('count_')).forEach(k=>localStorage.removeItem(k));
-  historyStack=[]; $('productCard').className='card pending hidden';
-  showMsg('Tutti i conteggi azzerati'); speak('Tutti i conteggi azzerati');
-};
+        if (!items.length) {
+          autoQueue = [];
+          autoIndex = 0;
+          autoMode = false;
+          renderQueueList();
+          showMsg('Nessun prodotto con quantità valida in questa colonna.', true);
+          speak('Nessun prodotto nella colonna');
+          return;
+        }
 
-function applyRole(){
-  const isG = role==='GESTORE';
-  $('roleTitle').textContent = isG?'Gestore':'Magazziniere';
-  $('authBtn').textContent = isG?'LOGOUT':'LOGIN';
-  $('settingsBtn').style.display = isG ? 'inline-block' : 'none';
-  $('bottomNav').classList.toggle('hidden',!isG);
-  $('resetColBtn').classList.toggle('hidden',!isG);
-  $('resetAllBtn').classList.toggle('hidden',!isG);
-  $('gestoreSettings').classList.toggle('hidden',!isG);
-  $('startColumnBtn').classList.toggle('hidden',!isG);
-  $('nextAutoBtn').classList.toggle('hidden',!isG);
-  $('startWorkBtn').classList.toggle('hidden', isG);
-  if(!isG){ showView('viewScanner'); }
-}
-$('authBtn').onclick=()=>{
-  if(role==='GESTORE'){ role='MAGAZZINIERE'; localStorage.setItem('role',role); applyRole(); speak('Modalità magazziniere'); }
-  else { $('loginPass').value=''; $('loginDialog').showModal(); }
-};
-$('doLoginBtn').onclick=()=>{
-  if($('loginUser').value.trim()==='Gestore' && $('loginPass').value==='Cecap'){
-    role='GESTORE'; localStorage.setItem('role',role); $('loginDialog').close(); applyRole(); speak('Accesso gestore eseguito');
-  } else { showMsg('Credenziali non valide',true); speak('Credenziali non valide'); }
-};
-$('cancelLoginBtn').onclick=()=>$('loginDialog').close();
-
-function showView(id){
-  if(id==='viewSettings' && role!=='GESTORE') id = 'viewScanner';
-  ['viewScanner','viewGestore','viewSettings'].forEach(v => $(v).classList.toggle('hidden', v !== id));
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === id));
-  if(id==='viewScanner') startScanner(); else stopScanner();
-}
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
-$('settingsBtn').onclick=()=>showView('viewSettings');
-$('backToScannerBtn').onclick=()=>showView('viewScanner');
-
-function renderColIndicator(){
-  const col = columnsMeta.find(c => c.letter === settings.activeQtyColumn);
-  $('colIndicator').innerHTML = 'COLONNA: ' + settings.activeQtyColumn +
-    (col ? ' <span class="swatch" style="background:' + col.color + '"></span> ' + col.header : '');
-}
-
-function renderColList(){
-  const c = $('colList'); c.innerHTML='';
-  if(!columnsMeta.length){ c.innerHTML='<p>Nessuna colonna caricata. Controlla le impostazioni.</p>'; return; }
-  columnsMeta.forEach(col=>{
-    const div=document.createElement('div');
-    div.className='colitem'+(col.letter===settings.activeQtyColumn?' sel':'');
-    div.innerHTML='<span class="swatch" style="background:'+col.color+'"></span><b>'+col.letter+'</b>&nbsp;-&nbsp;'+(col.header||'(senza nome)');
-    div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList(); showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
-    c.appendChild(div);
-  });
-}
-
-function fillSettingsForm(){
-  $('sSheet').value = settings.spreadsheetId;
-  $('sBarcodeCol').value = settings.barcodeColumn;
-  $('sNameCol').value = settings.nameColumn;
-  $('sDescCol').value = settings.descColumn;
-  $('sPhotoCol').value = settings.photoColumn;
-  $('sQtyCol').value = settings.activeQtyColumn;
-}
-
-async function loadLocalExcelFile(file){
-  if (!file) return;
-  const ext = (file.name || '').split('.').pop().toLowerCase();
-  if (!['xlsx','xls','csv'].includes(ext)) {
-    throw new Error('File non valido. Usa .xlsx, .xls oppure .csv');
-  }
-
-  const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-  const firstSheetName = workbook.SheetNames[0];
-  const ws = workbook.Sheets[firstSheetName];
-  const rowsRaw = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1, defval: '' });
-  const rows = rowsRaw.filter(row => Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== ''));
-  if (!rows.length) {
-    throw new Error('Il file caricato è vuoto.');
-  }
-
-  const headers = rows[0].map((h, idx) => String(h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
-  const dataRows = rows.slice(1).map(values => {
-    const obj = {};
-    headers.forEach((header, index) => { obj[header] = values[index] !== undefined ? String(values[index]) : ''; });
-    return obj;
-  });
-
-  settings.sourceType = 'local';
-  settings.spreadsheetId = '';
-  settings.localSheetData = { headers, rows: dataRows, fileName: file.name };
-  saveSettings();
-  loadMeta();
-  showMsg('File locale caricato: ' + file.name);
-  speak('File locale caricato');
-  showView('viewScanner');
-}
-
-$('loadLocalFileBtn').onclick = async () => {
-  const file = $('sLocalFile').files[0];
-  if (!file) {
-    showMsg('Seleziona un file .xlsx, .xls o .csv', true);
-    return;
-  }
-  try {
-    await loadLocalExcelFile(file);
-  } catch (e) {
-    showMsg(e.message || 'Errore nel caricamento del file locale', true);
-    speak('Errore caricamento file');
-  }
-};
-
-$('saveSettingsBtn').onclick=()=>{
-  const raw = $('sSheet').value.trim();
-  settings.spreadsheetId = normalizeSpreadsheetId(raw);
-  settings.sourceType = detectSourceType(raw);
-  if(role==='GESTORE'){
-    settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
-    settings.nameColumn = $('sNameCol').value.trim().toUpperCase() || 'C';
-    settings.descColumn = $('sDescCol').value.trim().toUpperCase() || 'F';
-    settings.photoColumn = $('sPhotoCol').value.trim().toUpperCase() || 'P';
-    settings.activeQtyColumn = $('sQtyCol').value.trim().toUpperCase() || 'K';
-  }
-  if (!settings.spreadsheetId) {
-    settings.sourceType = settings.localSheetData ? 'local' : 'sheet';
-  }
-  saveSettings();
-  showMsg('Impostazioni salvate');
-  loadMeta();
-  showView('viewScanner');
-};
-
-$('saveProductBtn').onclick=async ()=>{
-  if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
-  if(!settings.spreadsheetId && !settings.scriptUrl && !settings.localSheetData){
-    showMsg('Inserisci prima ID del foglio Google, il link Drive o carica un file locale.',true); return;
-  }
-  if(!settings.scriptUrl && settings.spreadsheetId){
-    showMsg('La lettura è diretta dal foglio Google. La scrittura richiede OAuth o un backend Apps Script.',true);
-    return;
-  }
-
-  const payload = Object.assign({action:'updateProduct'}, commonParams(), {
-    barcode: $('fBarcode').value.trim(),
-    name: $('fName').value,
-    description: $('fDesc').value,
-    quantity: parseInt($('fQty').value) || 0
-  });
-
-  try {
-    const photo = await readPhotoSource();
-    if(photo){
-      payload.photoBase64 = photo.photoBase64;
-      payload.photoMime = photo.photoMime;
-      payload.photoName = photo.photoName;
+        autoQueue = items;
+        autoIndex = 0;
+        autoMode = true;
+        renderQueueList();
+        showNextAutoProduct();
+        showMsg('Colonna avviata. Inquadra il codice del prodotto corrente.', false);
+      } catch (e) {
+        autoQueue = [];
+        autoIndex = 0;
+        autoMode = false;
+        renderQueueList();
+        showMsg('Errore caricamento colonna: ' + e.message, true);
+        speak('Errore caricamento colonna');
+      }
     }
-  } catch (e) {
-    showMsg(e.message || 'File non leggibile da Google Drive',true);
-    return;
-  }
 
-  showMsg('Salvataggio in corso...');
-  try{
-    const res = await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
-    const txt = await res.text();
-    let ok = false; try { ok = JSON.parse(txt).ok; } catch (e) { ok = res.ok; }
-    showMsg(ok ? 'Articolo salvato nel foglio ✔' : 'Errore nel salvataggio: '+txt, !ok);
-    if(ok) speak('Articolo salvato');
-  } catch (e) { showMsg('Errore: '+e.message,true); }
-};
+    function processAutoProductMatch(code) {
+      if (!autoMode || !autoQueue.length) return true;
+      const current = autoQueue[autoIndex];
+      if (!current) {
+        finishAutoSequence();
+        return false;
+      }
+      if (String(code).trim() !== String(current.barcode || '').trim()) {
+        showMsg('Codice sbagliato: serve ' + (current.name || current.barcode), true);
+        speak('Codice sbagliato');
+        beep(true);
+        return false;
+      }
+      return true;
+    }
 
-document.body.addEventListener('touchend',function once(){
-  try{ new (window.AudioContext||window.webkitAudioContext)().resume(); }catch(e){}
-  if('wakeLock' in navigator){ navigator.wakeLock.request('screen').catch(()=>{}); }
-},{once:true});
+    function handleBarcode(code) {
+      const normalizedCode = String(code || '').trim();
+      showMsg('Ricerca: ' + normalizedCode + ' ...');
 
-fillSettingsForm();
-applyRole();
-renderColIndicator();
-loadMeta();
-if(!settings.spreadsheetId && !settings.localSheetData && role==='GESTORE') showView('viewSettings');
-if(!settings.spreadsheetId && !settings.localSheetData && role!=='GESTORE') showView('viewScanner');
-</script>
+      if (autoMode && !processAutoProductMatch(normalizedCode)) {
+        return;
+      }
+
+      apiGet(Object.assign({ action: 'getProduct', barcode: normalizedCode }, commonParams()))
+        .then(res => {
+          if (!res.ok) {
+            showMsg(res.error, true);
+            speak('Errore');
+            return;
+          }
+          if (!res.product) {
+            showMsg('Prodotto non presente nel foglio', true);
+            speak('Prodotto non presente');
+            beep(true);
+            return;
+          }
+
+          const p = res.product;
+          currentProduct = p;
+          const key = 'count_' + p.barcode + '_' + p.qtyColumn;
+          const stored = localStorage.getItem(key);
+          const before = stored === null ? p.quantity : (parseInt(stored, 10) || p.quantity);
+          const remaining = Math.max(before - 1, 0);
+          localStorage.setItem(key, String(remaining));
+          historyStack.push({ key, before });
+          renderProduct(p, remaining);
+
+          if (autoMode) {
+            if (remaining === 0) {
+              showMsg('RIGA COMPLETATA: ' + (p.name || 'Prodotto') + '. Passo al successivo.', false);
+              speak('Riga completata');
+              beep(true); vibrate(true);
+              autoIndex += 1;
+              renderQueueList();
+              setTimeout(() => {
+                if (autoIndex >= autoQueue.length) {
+                  finishAutoSequence();
+                  return;
+                }
+                showNextAutoProduct();
+              }, 900);
+              return;
+            }
+            showMsg('Mancano ' + remaining + ' per ' + (p.name || 'Prodotto'));
+            speak('Mancano ' + remaining);
+            beep(false); vibrate(false);
+            return;
+          }
+
+          if (remaining === 0) {
+            beep(true); vibrate(true); speak('Fatto');
+            showMsg('COMPLETATO!');
+          } else {
+            beep(false); vibrate(false); speak('Mancano ' + remaining);
+            showMsg('Mancano ' + remaining);
+          }
+        })
+        .catch(e => {
+          showMsg('Errore: ' + e.message, true);
+          speak('Errore di collegamento');
+        });
+    }
+
+    function onScan(code) {
+      const now = Date.now();
+      if (code === lastScan.code && now - lastScan.time < 1500) return;
+      lastScan = { code, time: now };
+      handleBarcode(code);
+    }
+
+    function startScanner() {
+      if (scanner) return;
+      if (typeof Html5Qrcode === 'undefined') {
+        showMsg('Libreria scanner non caricata: serve connessione internet.', true);
+        return;
+      }
+      let formats;
+      try {
+        formats = [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.QR_CODE
+        ];
+      } catch (e) {
+        formats = undefined;
+      }
+      scanner = formats ? new Html5Qrcode('camera', { formatsToSupport: formats }) : new Html5Qrcode('camera');
+      scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 260, height: 160 } }, onScan, () => {})
+        .catch(err => {
+          showMsg('Fotocamera non disponibile: ' + err, true);
+          scanner = null;
+        });
+    }
+
+    function stopScanner() {
+      if (scanner) {
+        const s = scanner;
+        scanner = null;
+        s.stop().then(() => s.clear()).catch(() => {});
+      }
+    }
+
+    function loadMeta() {
+      if (!settings.spreadsheetId && !settings.scriptUrl && !settings.localSheetData) {
+        showMsg('Vai in IMPOSTAZIONI e inserisci l\'ID del foglio Google, il link Drive o carica un file locale.', true);
+        return;
+      }
+      apiGet(Object.assign({ action: 'meta' }, commonParams()))
+        .then(res => {
+          if (res.ok) {
+            columnsMeta = res.columns || [];
+            renderColIndicator();
+            renderColList();
+          } else {
+            showMsg(res.error || 'Errore nel caricamento del foglio', true);
+          }
+        })
+        .catch(e => showMsg('Errore collegamento: ' + e.message, true));
+    }
+
+    function applyRole() {
+      const isGestore = role === 'GESTORE';
+      $('roleTitle').textContent = isGestore ? 'Gestore' : 'Magazziniere';
+      $('authBtn').textContent = isGestore ? 'LOGOUT' : 'LOGIN';
+      $('settingsBtn').style.display = isGestore ? 'inline-block' : 'none';
+      $('bottomNav').classList.toggle('hidden', !isGestore);
+      $('resetColBtn').classList.toggle('hidden', !isGestore);
+      $('resetAllBtn').classList.toggle('hidden', !isGestore);
+      $('gestoreSettings').classList.toggle('hidden', !isGestore);
+      $('startColumnBtn').classList.toggle('hidden', !isGestore);
+      $('nextAutoBtn').classList.toggle('hidden', !isGestore);
+      $('startWorkBtn').classList.toggle('hidden', isGestore);
+      if (!isGestore) showView('viewScanner');
+    }
+
+    function showView(id) {
+      if (id === 'viewSettings' && role !== 'GESTORE') id = 'viewScanner';
+      ['viewScanner', 'viewGestore', 'viewSettings'].forEach(v => $(v).classList.toggle('hidden', v !== id));
+      document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === id));
+      if (id === 'viewScanner') startScanner(); else stopScanner();
+    }
+
+    $('startWorkBtn').onclick = () => startColumnSequence();
+    $('startColumnBtn').onclick = () => startColumnSequence();
+    $('startSelectedColumnBtn').onclick = () => {
+      settings.activeQtyColumn = $('sQtyCol').value.trim() || settings.activeQtyColumn;
+      saveSettings();
+      loadMeta();
+      startColumnSequence();
+    };
+
+    $('nextAutoBtn').onclick = () => {
+      if (!autoQueue.length) {
+        showMsg('Nessuna colonna in esecuzione.', true);
+        return;
+      }
+      autoIndex += 1;
+      if (autoIndex >= autoQueue.length) {
+        finishAutoSequence();
+        return;
+      }
+      showNextAutoProduct();
+    };
+
+    $('undoBtn').onclick = () => {
+      if (!historyStack.length) {
+        showMsg('Niente da annullare');
+        speak('Niente da annullare');
+        return;
+      }
+      const last = historyStack.pop();
+      localStorage.setItem(last.key, String(last.before));
+      showMsg('Annullato. Riportato a ' + last.before);
+      speak('Annullato, mancano ' + last.before);
+      if (currentProduct) renderProduct(currentProduct, last.before);
+    };
+
+    $('resetColBtn').onclick = () => {
+      if (!confirm('Ricominciare TUTTA la colonna ' + settings.activeQtyColumn + ' da zero?')) return;
+      resetColumnCounters(settings.activeQtyColumn);
+      historyStack = [];
+      $('productCard').className = 'card pending hidden';
+      showMsg('Colonna ' + settings.activeQtyColumn + ' azzerata');
+      speak('Colonna azzerata');
+    };
+
+    $('resetAllBtn').onclick = () => {
+      if (!confirm('Azzerare TUTTI i conteggi di TUTTE le colonne?')) return;
+      Object.keys(localStorage).filter(k => k.startsWith('count_')).forEach(k => localStorage.removeItem(k));
+      historyStack = [];
+      $('productCard').className = 'card pending hidden';
+      showMsg('Tutti i conteggi azzerati');
+      speak('Tutti i conteggi azzerati');
+    };
+
+    $('authBtn').onclick = () => {
+      if (role === 'GESTORE') {
+        role = 'MAGAZZINIERE';
+        localStorage.setItem('role', role);
+        applyRole();
+        speak('Modalità magazziniere');
+      } else {
+        $('loginPass').value = '';
+        $('loginDialog').showModal();
+      }
+    };
+
+    $('doLoginBtn').onclick = () => {
+      if ($('loginUser').value.trim() === 'Gestore' && $('loginPass').value === 'Cecap') {
+        role = 'GESTORE';
+        localStorage.setItem('role', role);
+        $('loginDialog').close();
+        applyRole();
+        speak('Accesso gestore eseguito');
+      } else {
+        showMsg('Credenziali non valide', true);
+        speak('Credenziali non valide');
+      }
+    };
+
+    $('cancelLoginBtn').onclick = () => $('loginDialog').close();
+    document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
+    $('settingsBtn').onclick = () => showView('viewSettings');
+    $('backToScannerBtn').onclick = () => showView('viewScanner');
+
+    $('saveSettingsBtn').onclick = async () => {
+      settings.spreadsheetId = $('sSheet').value.trim();
+      settings.barcodeColumn = $('sBarcodeCol').value.trim() || settings.barcodeColumn;
+      settings.nameColumn = $('sNameCol').value.trim() || settings.nameColumn;
+      settings.descColumn = $('sDescCol').value.trim() || settings.descColumn;
+      settings.photoColumn = $('sPhotoCol').value.trim() || settings.photoColumn;
+      settings.activeQtyColumn = $('sQtyCol').value.trim() || settings.activeQtyColumn;
+      settings.sourceType = detectSourceType(settings.spreadsheetId || '');
+      saveSettings();
+      await loadMeta();
+      renderColIndicator();
+      renderColList();
+      showView('viewScanner');
+      if (role === 'GESTORE') startColumnSequence();
+    };
+
+    $('loadLocalFileBtn').onclick = async () => {
+      const file = $('sLocalFile').files[0];
+      if (!file) return;
+      try {
+        const ext = (file.name || '').split('.').pop().toLowerCase();
+        if (!['xlsx', 'xls', 'csv'].includes(ext)) throw new Error('File non valido. Usa .xlsx, .xls oppure .csv');
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+        const firstSheetName = workbook.SheetNames[0];
+        const ws = workbook.Sheets[firstSheetName];
+        const rowsRaw = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1, defval: '' });
+        const rows = rowsRaw.filter(row => Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== ''));
+        if (!rows.length) throw new Error('Il file caricato è vuoto.');
+        const headers = rows[0].map((h, idx) => String(h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
+        const dataRows = rows.slice(1).map(values => {
+          const obj = {};
+          headers.forEach((header, index) => { obj[header] = values[index] !== undefined ? String(values[index]) : ''; });
+          return obj;
+        });
+        settings.sourceType = 'local';
+        settings.spreadsheetId = '';
+        settings.localSheetData = { headers, rows: dataRows, fileName: file.name };
+        saveSettings();
+        showMsg('File locale caricato correttamente');
+        loadMeta();
+      } catch (e) {
+        showMsg(e.message || 'Errore caricamento file', true);
+      }
+    };
+
+    fillSettingsForm();
+    applyRole();
+    loadMeta();
+  </script>
 </body>
 </html>
