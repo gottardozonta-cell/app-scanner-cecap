@@ -88,7 +88,10 @@
 
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
-  <label>Link Google Drive del foglio dati</label><input id="sDrive" placeholder="https://docs.google.com/spreadsheets/d/...">
+  <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
+  <label>Token segreto (la password dello script)</label><input id="sToken">
+  <label>ID foglio Google</label><input id="sSheet">
+  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
   <div id="gestoreSettings" class="hidden">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
@@ -118,7 +121,8 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { driveLink:'', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
+  barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
 let role = localStorage.getItem('role') || 'MAGAZZINIERE';
@@ -127,17 +131,11 @@ let currentProduct = null;
 let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
-let driveDataCache = [];
-let queuedProducts = [];
-let totalLoadPieces = 0;
 
-function loadSettings(){
-  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings') || '{}')); }
-  catch (e) { return Object.assign({}, DEFAULTS); }
-}
+function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
-function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u); }catch(e){} }
+function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
 function beep(long){ try{
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
   const o=ctx.createOscillator(), g=ctx.createGain();
@@ -158,203 +156,6 @@ function normalizeDriveFileUrl(raw){
   if(/^https?:\/\//i.test(value)) return value;
   if(/^[A-Za-z0-9_-]{10,}$/.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
   return value;
-}
-
-function normalizeGoogleSheetUrl(raw){
-  if(!raw) return '';
-  const value = raw.trim();
-  if(!value) return '';
-
-  const sheetIdMatch = value.match(/\/spreadsheets\/d\/([A-Za-z0-9-_]+)/i) || value.match(/[?&]id=([A-Za-z0-9-_]+)/i);
-  const fileIdMatch = value.match(/\/file\/d\/([A-Za-z0-9-_]+)/i) || value.match(/(?:\/d\/|id=)([A-Za-z0-9-_]{10,})/i);
-  const foundId = sheetIdMatch && sheetIdMatch[1] ? sheetIdMatch[1] : (fileIdMatch && fileIdMatch[1] ? fileIdMatch[1] : null);
-
-  if(foundId){
-    let url = 'https://docs.google.com/spreadsheets/d/' + foundId + '/export?format=csv';
-    const gid = value.match(/[?&]gid=([0-9]+)/i) || value.match(/#gid=([0-9]+)/i);
-    if(gid && gid[1]) url += '&gid=' + gid[1];
-    return url;
-  }
-
-  if(/^https?:\/\//i.test(value) && /\.csv($|\?)/i.test(value)) return value;
-  return value;
-}
-
-function normalizeQtyValue(value){
-  if(value === null || value === undefined) return 0;
-  const s = String(value).trim();
-  if(!s) return 0;
-  const cleaned = s.replace(/\./g, '').replace(',', '.').replace(/[^0-9.\-]/g, '');
-  if(!cleaned) return 0;
-  const num = Number.parseFloat(cleaned);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function colToIndex(col){
-  const letters = (col || '').toUpperCase();
-  let value = 0;
-  for (const ch of letters){
-    value = value * 26 + (ch.charCodeAt(0) - 64);
-  }
-  return Math.max(0, value - 1);
-}
-
-function indexToCol(index){
-  let n = index + 1;
-  let letters = '';
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
-function parseCsv(text){
-  if(!text || !text.trim()) return [];
-  const rows=[];
-  let row=[];
-  let value='';
-  let inQuotes=false;
-
-  for(let i=0;i<text.length;i++){
-    const ch=text[i];
-    const next=text[i+1];
-    if(ch === '"'){
-      if(inQuotes && next === '"'){ value += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if(ch === ',' && !inQuotes){
-      row.push(value);
-      value='';
-    } else if((ch === '\n' || ch === '\r') && !inQuotes){
-      if(ch === '\r' && next === '\n') i++;
-      row.push(value);
-      if(row.some(cell => cell !== '')) rows.push(row);
-      row=[];
-      value='';
-    } else {
-      value += ch;
-    }
-  }
-
-  if(value.length || row.length){
-    row.push(value);
-    if(row.some(cell => cell !== '')) rows.push(row);
-  }
-  return rows;
-}
-
-function buildColumnsMetaFromRows(rows){
-  if(!rows.length) return [];
-  const headers = rows[0];
-  const palette = ['#00695C','#E65100','#0D47A1','#B71C1C','#880E4F','#1B5E20','#F9A825'];
-  return headers.map((header,index)=>({
-    letter:indexToCol(index),
-    header:(header||'').trim() || ('Colonna '+indexToCol(index)),
-    color:palette[index % palette.length]
-  }));
-}
-
-async function loadDriveSheetData(){
-  if(!settings.driveLink){
-    driveDataCache=[];
-    queuedProducts=[];
-    totalLoadPieces=0;
-    return [];
-  }
-
-  const exportUrl = normalizeGoogleSheetUrl(settings.driveLink);
-  if(!exportUrl){
-    driveDataCache=[];
-    queuedProducts=[];
-    totalLoadPieces=0;
-    throw new Error('Link Google Drive non valido. Usa il link del foglio condiviso.');
-  }
-
-  const res = await fetch(exportUrl, { mode: 'cors' });
-  if(!res.ok) throw new Error('Impossibile leggere il foglio da Google Drive.');
-  const csv = await res.text();
-  const rows = parseCsv(csv);
-  driveDataCache = rows;
-  buildQueuedProducts();
-  return rows;
-}
-
-function buildQueuedProducts(){
-  queuedProducts = [];
-  totalLoadPieces = 0;
-  if(!driveDataCache.length) return [];
-
-  const qtyIndex = colToIndex(settings.activeQtyColumn);
-  const barcodeIndex = colToIndex(settings.barcodeColumn);
-  const nameIndex = colToIndex(settings.nameColumn);
-  const descIndex = colToIndex(settings.descColumn);
-  const photoIndex = colToIndex(settings.photoColumn);
-
-  for(let i=1;i<driveDataCache.length;i++){
-    const row = driveDataCache[i];
-    const qty = normalizeQtyValue(row[qtyIndex]);
-    if(qty <= 0) continue;
-
-    const barcode = String(row[barcodeIndex] || '').trim();
-    if(!barcode) continue;
-
-    const item = {
-      barcode,
-      name:String(row[nameIndex] || '').trim() || 'Prodotto',
-      description:String(row[descIndex] || '').trim(),
-      photoUrl:String(row[photoIndex] || '').trim(),
-      quantity: qty,
-      qtyColumn: settings.activeQtyColumn
-    };
-    queuedProducts.push(item);
-    totalLoadPieces += qty;
-  }
-
-  if(queuedProducts.length){
-    currentProduct = queuedProducts[0];
-    renderProduct(currentProduct, currentProduct.quantity);
-    showMsg('PROSSIMO: ' + currentProduct.name + ' - ' + currentProduct.quantity + ' da scannerizzare');
-  } else {
-    currentProduct = null;
-    $('productCard').className='card done';
-    $('pName').textContent='FINE CARICO';
-    $('pDesc').textContent='Nessun articolo da caricare';
-    $('pCount').textContent='0';
-    $('pLabel').textContent='ARTICOLI';
-    $('pPhoto').style.display='none';
-    showMsg('FINE CARICO - 0 pezzi');
-  }
-
-  return queuedProducts;
-}
-
-function findProductInDriveData(barcode){
-  if(!driveDataCache.length) return null;
-
-  const barcodeIndex = colToIndex(settings.barcodeColumn);
-  const nameIndex = colToIndex(settings.nameColumn);
-  const descIndex = colToIndex(settings.descColumn);
-  const photoIndex = colToIndex(settings.photoColumn);
-  const qtyIndex = colToIndex(settings.activeQtyColumn);
-
-  for(let i=1;i<driveDataCache.length;i++){
-    const row = driveDataCache[i];
-    const rowBarcode = (row[barcodeIndex] || '').trim();
-    if(String(rowBarcode).toLowerCase() !== String(barcode).trim().toLowerCase()) continue;
-
-    const quantity = normalizeQtyValue(row[qtyIndex]);
-    return {
-      barcode: rowBarcode,
-      name: row[nameIndex] || '',
-      description: row[descIndex] || '',
-      photoUrl: row[photoIndex] || '',
-      quantity: quantity,
-      qtyColumn: settings.activeQtyColumn
-    };
-  }
-
-  return null;
 }
 
 function blobToBase64(blob){
@@ -388,21 +189,36 @@ async function readPhotoSource(){
   return null;
 }
 
-function loadMeta(){
-  if(settings.driveLink){
-    loadDriveSheetData()
-      .then(rows => {
-        columnsMeta = buildColumnsMetaFromRows(rows);
-        renderColIndicator();
-        renderColList();
-      })
-      .catch(e => showMsg('Errore collegamento: ' + e.message, true));
-    return;
-  }
+/* --- CHIAMATE AL GOOGLE APPS SCRIPT --- */
+function commonParams(){ return { token:settings.token, spreadsheetId:settings.spreadsheetId, sheetName:settings.sheetName,
+  barcodeColumn:settings.barcodeColumn, nameColumn:settings.nameColumn, descColumn:settings.descColumn,
+  photoColumn:settings.photoColumn, qtyColumn:settings.activeQtyColumn }; }
 
-  showMsg('Imposta il link del foglio Google Drive nelle impostazioni.', true);
+function apiGet(params){
+  const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
+  const sep = settings.scriptUrl.includes('?') ? '&' : '?';
+  const url = settings.scriptUrl + sep + q;
+
+  return fetch(url).then(async r => {
+    const text = await r.text();
+    if(!text) return { ok:false, error:'Nessuna risposta dal server.' };
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
+      throw new Error('Risposta non JSON dal backend. Controlla URL Apps Script, token e accessi. Dettaglio: ' + preview);
+    }
+  });
 }
 
+function loadMeta(){
+  if(!settings.scriptUrl){ showMsg('Vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
+  apiGet(Object.assign({action:'meta'}, commonParams()))
+    .then(res=>{ if(res.ok){ columnsMeta=res.columns||[]; renderColIndicator(); renderColList(); } else showMsg(res.error,true); })
+    .catch(e=>showMsg('Errore collegamento: '+e.message,true));
+}
+
+/* --- SCANNER --- */
 function startScanner(){
   if(scanner) return;
   if(typeof Html5Qrcode==='undefined'){ showMsg('Libreria scanner non caricata: serve connessione internet.',true); return; }
@@ -426,88 +242,38 @@ function onScan(code){
 
 function handleBarcode(code){
   showMsg('Ricerca: '+code+' ...');
-
-  if(settings.driveLink && queuedProducts.length){
-    const current = queuedProducts[0];
-    const scanned = String(code).trim().toLowerCase();
-    const expected = String(current.barcode).trim().toLowerCase();
-
-    if(scanned !== expected){
-      showMsg('Prodotto non previsto. Attendere: '+current.name, true);
-      speak('Prodotto non previsto');
-      beep(true);
-      return;
-    }
-
-    current.quantity = current.quantity - 1;
-
-    if(current.quantity > 0){
-      renderProduct(current, current.quantity);
-      showMsg('Mancano ' + current.quantity + ' pezzi di ' + current.name, false);
-      speak('Mancano '+current.quantity);
-      beep(false);
-      return;
-    }
-
-    queuedProducts.shift();
-    if(queuedProducts.length){
-      currentProduct = queuedProducts[0];
-      renderProduct(currentProduct, currentProduct.quantity);
-      showMsg('PROSSIMO: ' + currentProduct.name + ' - ' + currentProduct.quantity + ' da scannerizzare', false);
-      speak('Prossimo prodotto');
-      beep(false);
-      return;
-    }
-
-    currentProduct = null;
-    $('productCard').className='card done';
-    $('pName').textContent='FINE CARICO';
-    $('pDesc').textContent='Tutti i pezzi sono stati completati';
-    $('pCount').textContent=String(totalLoadPieces);
-    $('pLabel').textContent='PEZZI COMPLETATI';
-    $('pPhoto').style.display='none';
-    showMsg('FINE CARICO - ' + totalLoadPieces + ' pezzi', false);
-    speak('Fine carico');
-    beep(true);
-    vibrate(true);
-    return;
-  }
-
-  if(settings.driveLink){
-    const product = findProductInDriveData(code);
-    if(!product){ showMsg('Prodotto non presente nel foglio', true); speak('Prodotto non presente'); beep(true); return; }
-    currentProduct = product;
-    const currentQty = Math.max((product.quantity || 0) - 1, 0);
-    renderProduct(product, currentQty);
-    if(currentQty === 0){
-      showMsg('COMPLETATO!');
-      speak('Fatto');
-      beep(true);
-      vibrate(true);
-    } else {
-      showMsg('Mancano ' + currentQty + ' pezzi', false);
-      speak('Mancano ' + currentQty);
-      beep(false);
-    }
-    return;
-  }
-
-  showMsg('Nessun collegamento configurato. Inserisci il link Google Drive.', true);
+  apiGet(Object.assign({action:'getProduct',barcode:code},commonParams()))
+    .then(res=>{
+      if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
+      if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
+      const p=res.product; currentProduct=p;
+      if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
+      const key='count_'+p.barcode+'_'+p.qtyColumn;
+      const stored=localStorage.getItem(key);
+      const before = stored===null ? p.quantity : parseInt(stored);
+      const remaining=Math.max(before-1,0);
+      localStorage.setItem(key,String(remaining));
+      historyStack.push({key:key,before:before});
+      renderProduct(p,remaining);
+      if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
+      else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
+    })
+    .catch(e=>{ showMsg('Errore: '+e.message,true); speak('Errore di collegamento'); });
 }
 
 function renderProduct(p,remaining){
-  if(!p) return;
-  const done = remaining<=0 && (p.quantity || 0) > 0;
+  const done = remaining<=0 && p.quantity>0;
   $('productCard').className='card '+(done?'done':'pending');
   $('pName').textContent=p.name||'Prodotto';
   $('pDesc').textContent=p.description||'';
-  $('pCount').textContent=done ? 'FATTO!' : String(remaining);
-  $('pLabel').textContent=done ? 'PRODOTTO FINITO' : 'PEZZI RIMANENTI';
+  $('pCount').textContent=done?'FATTO!':remaining;
+  $('pLabel').textContent=done?'PRODOTTO FINITO':'PEZZI RIMANENTI';
   const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
   if(photoUrl){ $('pPhoto').src=photoUrl; $('pPhoto').style.display='block'; }
   else $('pPhoto').style.display='none';
 }
 
+/* --- PULSANTI --- */
 $('undoBtn').onclick=()=>{
   if(!historyStack.length){ showMsg('Niente da annullare'); speak('Niente da annullare'); return; }
   const last=historyStack.pop();
@@ -529,16 +295,19 @@ $('resetAllBtn').onclick=()=>{
   showMsg('Tutti i conteggi azzerati'); speak('Tutti i conteggi azzerati');
 };
 
+/* --- RUOLI --- */
 function applyRole(){
   const isG = role==='GESTORE';
-  $('roleTitle').textContent = isG ? 'Gestore' : 'Magazziniere';
-  $('authBtn').textContent = isG ? 'LOGOUT' : 'LOGIN';
+  $('roleTitle').textContent = isG?'Gestore':'Magazziniere';
+  $('authBtn').textContent = isG?'LOGOUT':'LOGIN';
   $('settingsBtn').style.display = isG ? 'inline-block' : 'none';
-  $('bottomNav').classList.toggle('hidden', !isG);
-  $('resetColBtn').classList.toggle('hidden', !isG);
-  $('resetAllBtn').classList.toggle('hidden', !isG);
-  $('gestoreSettings').classList.toggle('hidden', !isG);
-  if(!isG) showView('viewScanner');
+  $('bottomNav').classList.toggle('hidden',!isG);
+  $('resetColBtn').classList.toggle('hidden',!isG);
+  $('resetAllBtn').classList.toggle('hidden',!isG);
+  $('gestoreSettings').classList.toggle('hidden',!isG);
+  if(!isG){
+    showView('viewScanner');
+  }
 }
 $('authBtn').onclick=()=>{
   if(role==='GESTORE'){ role='MAGAZZINIERE'; localStorage.setItem('role',role); applyRole(); speak('Modalità magazziniere'); }
@@ -551,7 +320,11 @@ $('doLoginBtn').onclick=()=>{
 };
 $('cancelLoginBtn').onclick=()=>$('loginDialog').close();
 
+/* --- VISTE --- */
 function showView(id){
+  if(id==='viewSettings' && role!=='GESTORE') {
+    id = 'viewScanner';
+  }
   ['viewScanner','viewGestore','viewSettings'].forEach(v=>$(v).classList.toggle('hidden',v!==id));
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===id));
   if(id==='viewScanner') startScanner(); else stopScanner();
@@ -560,12 +333,12 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.data
 $('settingsBtn').onclick=()=>showView('viewSettings');
 $('backToScannerBtn').onclick=()=>showView('viewScanner');
 
+/* --- COLONNE --- */
 function renderColIndicator(){
   const col=columnsMeta.find(c=>c.letter===settings.activeQtyColumn);
   $('colIndicator').innerHTML='COLONNA: '+settings.activeQtyColumn+
     (col? ' <span class="swatch" style="background:'+col.color+'"></span> '+col.header : '');
 }
-
 function renderColList(){
   const c=$('colList'); c.innerHTML='';
   if(!columnsMeta.length){ c.innerHTML='<p>Nessuna colonna caricata. Controlla le impostazioni.</p>'; return; }
@@ -573,49 +346,41 @@ function renderColList(){
     const div=document.createElement('div');
     div.className='colitem'+(col.letter===settings.activeQtyColumn?' sel':'');
     div.innerHTML='<span class="swatch" style="background:'+col.color+'"></span><b>'+col.letter+'</b>&nbsp;-&nbsp;'+(col.header||'(senza nome)');
-    div.onclick=()=>{
-      settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList();
-      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva');
-      if(settings.driveLink) buildQueuedProducts();
-    };
+    div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList();
+      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
     c.appendChild(div);
   });
 }
 
+/* --- IMPOSTAZIONI --- */
 function fillSettingsForm(){
-  $('sDrive').value=settings.driveLink || '';
+  $('sUrl').value=settings.scriptUrl; $('sToken').value=settings.token;
+  $('sSheet').value=settings.spreadsheetId; $('sTab').value=settings.sheetName;
   $('sBarcodeCol').value=settings.barcodeColumn; $('sNameCol').value=settings.nameColumn;
   $('sDescCol').value=settings.descColumn; $('sPhotoCol').value=settings.photoColumn;
   $('sQtyCol').value=settings.activeQtyColumn;
 }
-
 $('saveSettingsBtn').onclick=()=>{
-  settings.driveLink=$('sDrive').value.trim();
+  settings.scriptUrl=$('sUrl').value.trim();
+  settings.token=$('sToken').value.trim();
+  settings.spreadsheetId=$('sSheet').value.trim();
+  settings.sheetName=$('sTab').value.trim();
   if(role==='GESTORE'){
-    settings.barcodeColumn=$('sBarcodeCol').value.trim().toUpperCase() || 'E';
-    settings.nameColumn=$('sNameCol').value.trim().toUpperCase() || 'C';
-    settings.descColumn=$('sDescCol').value.trim().toUpperCase() || 'F';
-    settings.photoColumn=$('sPhotoCol').value.trim().toUpperCase() || 'P';
-    settings.activeQtyColumn=$('sQtyCol').value.trim().toUpperCase() || 'K';
+    settings.barcodeColumn=$('sBarcodeCol').value.trim().toUpperCase()||'E';
+    settings.nameColumn=$('sNameCol').value.trim().toUpperCase()||'C';
+    settings.descColumn=$('sDescCol').value.trim().toUpperCase()||'F';
+    settings.photoColumn=$('sPhotoCol').value.trim().toUpperCase()||'P';
+    settings.activeQtyColumn=$('sQtyCol').value.trim().toUpperCase()||'K';
   }
   saveSettings(); showMsg('Impostazioni salvate'); loadMeta(); showView('viewScanner');
 };
 
+/* --- SALVATAGGIO PRODOTTO (GESTORE) --- */
 $('saveProductBtn').onclick=async ()=>{
   if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
-
-  const payload = {
-    action: 'updateProduct',
-    barcode: $('fBarcode').value.trim(),
-    name: $('fName').value,
-    description: $('fDesc').value,
-    quantity: parseInt($('fQty').value) || 0,
-    barcodeColumn: settings.barcodeColumn,
-    nameColumn: settings.nameColumn,
-    descColumn: settings.descColumn,
-    photoColumn: settings.photoColumn,
-    qtyColumn: settings.activeQtyColumn
-  };
+  const payload=Object.assign({action:'updateProduct'},commonParams(),{
+    barcode:$('fBarcode').value.trim(), name:$('fName').value, description:$('fDesc').value,
+    quantity:parseInt($('fQty').value)||0 });
 
   try {
     const photo = await readPhotoSource();
@@ -625,27 +390,21 @@ $('saveProductBtn').onclick=async ()=>{
       payload.photoName = photo.photoName;
     }
   } catch (e) {
-    showMsg(e.message || 'File non leggibile da Google Drive', true);
+    showMsg(e.message || 'File non leggibile da Google Drive',true);
     return;
   }
 
   showMsg('Salvataggio in corso...');
   try{
-    if(!settings.driveLink){
-      showMsg('Inserisci prima il link del foglio Google Drive.', true);
-      return;
-    }
-
-    const res=await fetch(settings.driveLink,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+    const res=await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
     const txt=await res.text();
     let ok=false; try{ ok=JSON.parse(txt).ok; }catch(e){ ok=res.ok; }
-    showMsg(ok ? 'Articolo salvato nel foglio ✔' : 'Errore nel salvataggio: '+txt, !ok);
+    showMsg(ok?'Articolo salvato nel foglio ✔':'Errore nel salvataggio: '+txt,!ok);
     if(ok) speak('Articolo salvato');
-  } catch (e) {
-    showMsg('Errore: '+e.message, true);
-  }
+  }catch(e){ showMsg('Errore: '+e.message,true); }
 };
 
+/* --- AVVIO --- */
 document.body.addEventListener('touchend',function once(){
   try{ new (window.AudioContext||window.webkitAudioContext)().resume(); }catch(e){}
   if('wakeLock' in navigator){ navigator.wakeLock.request('screen').catch(()=>{}); }
@@ -655,8 +414,8 @@ fillSettingsForm();
 applyRole();
 renderColIndicator();
 loadMeta();
-if(!settings.driveLink && role==='GESTORE') showView('viewSettings');
-if(!settings.driveLink && role!=='GESTORE') showView('viewScanner');
+if(!settings.scriptUrl && role==='GESTORE') showView('viewSettings');
+if(!settings.scriptUrl && role!=='GESTORE') showView('viewScanner');
 </script>
 </body>
 </html>
