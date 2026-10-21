@@ -305,8 +305,7 @@ function getHeaderIndexByColumnSpec(columnSpec, headers){
   const idx = columnIndexFromLetter(text);
   if (idx >= 0) return idx;
   const normalized = text.toLowerCase();
-  const match = headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
-  return match;
+  return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
 }
 
 function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
@@ -446,8 +445,8 @@ async function directSheetFetch(params){
         const targetCode = String(params.barcode || '').trim();
 
         const productRow = rows.find(row => {
-          const collected = Object.keys(row).length ? Object.values(row) : [];
-          const codeValue = barcodeIndex >= 0 && barcodeIndex < collected.length ? String(collected[barcodeIndex] || '').trim() : '';
+          const values = headers.map(h => row[h] ?? '');
+          const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
           return codeValue === targetCode;
         });
 
