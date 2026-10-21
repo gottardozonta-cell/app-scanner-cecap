@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<html lang="it"><!DOCTYPE html>
 <html lang="it">
 <head>
   <meta charset="utf-8">
@@ -74,6 +75,7 @@
       <div style="font-size:18px; font-weight:bold; margin-bottom:6px;">Prodotti da lavorare</div>
       <div id="queueContent" class="queue-list"></div>
     </div>
+    <button class="big btn-primary" id="refreshBtn">&#x21BB; AGGIORNA VALORI DAL FOGLIO</button>
     <button class="big btn-primary" id="startWorkBtn">AVVIA LAVORO</button>
     <button class="big btn-primary hidden" id="startColumnBtn">AVVIA COLONNA</button>
     <button class="big btn-orange hidden" id="nextAutoBtn">PROSSIMO PRODOTTO</button>
@@ -93,21 +95,22 @@
     <label>Foto da Google Drive (URL completo o ID file)</label><input id="fPhotoDrive" placeholder="https://drive.google.com/file/d/... oppure ID del file">
     <button class="big btn-primary" id="saveProductBtn">SALVA NEL FOGLIO</button>
     <h2>Scegli la colonna countdown</h2>
-    <p>Tocca una colonna per attivarla (K, L, M, N, O...):</p>
+    <p>Tocca una colonna per attivarla (K, L, M, N, O, P, Q...):</p>
     <div id="colList"></div>
   </div>
 
   <div id="viewSettings" class="view hidden">
     <h2>Impostazioni</h2>
-    <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
+    <label>ID foglio Google / link Drive (il gid nella URL viene rispettato)</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/...#gid=123 oppure ID">
     <label>File Excel locale (.xlsx, .xls, .csv)</label><input id="sLocalFile" type="file" accept=".xlsx,.xls,.csv">
     <button class="big btn-primary" id="loadLocalFileBtn">CARICA FILE LOCALE</button>
     <div id="gestoreSettings" class="hidden">
+      <label>Nome scheda/tab (opzionale, es. Foglio1)</label><input id="sSheetTab" placeholder="Lascia vuoto per usare il gid della URL">
       <label>Colonna codice a barre</label><input id="sBarcodeCol">
       <label>Colonna nome prodotto</label><input id="sNameCol">
       <label>Colonna descrizione</label><input id="sDescCol">
       <label>Colonna foto (URL)</label><input id="sPhotoCol">
-      <label>Colonna quantità attiva</label><input id="sQtyCol">
+      <label>Colonna quantità attiva (K, L, M, N, O, P, Q...)</label><input id="sQtyCol">
     </div>
     <button class="big btn-primary" id="startSelectedColumnBtn">AVVIA COLONNA</button>
     <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
@@ -136,6 +139,8 @@
       scriptUrl: '',
       token: '',
       spreadsheetId: '',
+      sheetGid: '0',
+      sheetTab: '',
       sourceType: 'sheet',
       barcodeColumn: 'E',
       nameColumn: 'C',
@@ -155,6 +160,8 @@
     let autoQueue = [];
     let autoIndex = 0;
     let autoMode = false;
+
+    /* ================= IDENTIFICAZIONE FOGLIO ================= */
 
     function normalizeSpreadsheetId(value) {
       if (!value) return '';
@@ -189,13 +196,25 @@
       return raw;
     }
 
+    // Estrae il gid (scheda) dalla URL incollata, es. #gid=123456 oppure &gid=123456
+    function extractGid(raw) {
+      const m = String(raw || '').match(/[#?&]gid=(\d+)/i);
+      return m ? m[1] : null;
+    }
+
     function detectSourceType(value) {
       const raw = (value || '').trim();
       if (!raw) return 'sheet';
       const low = raw.toLowerCase();
-      if (low.includes('drive.google.com') || low.includes('/file/d/') || (low.includes('/d/') && low.includes('drive.google.com'))) return 'drive';
+      if (low.includes('drive.google.com') || low.includes('/file/d/')) return 'drive';
       if (low.includes('docs.google.com/spreadsheets') || low.includes('/spreadsheets/d/')) return 'sheet';
       return 'sheet';
+    }
+
+    function normalizeColumnSpec(spec) {
+      const raw = String(spec || '').trim();
+      if (/^[A-Za-z]{1,3}$/.test(raw)) return raw.toUpperCase();
+      return raw;
     }
 
     function loadSettings() {
@@ -204,7 +223,10 @@
         const normalized = Object.assign({}, DEFAULTS, parsed);
         const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
         if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
+        const gid = extractGid(rawSpreadsheet);
+        if (gid) normalized.sheetGid = gid;
         normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
+        normalized.activeQtyColumn = normalizeColumnSpec(normalized.activeQtyColumn) || 'K';
         normalized.localSheetData = parsed.localSheetData || normalized.localSheetData || null;
         return normalized;
       } catch (e) {
@@ -232,6 +254,164 @@
       if (/^[a-z0-9_-]{10,}$/i.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
       return value;
     }
+
+    /* ================= LETTURA POSIZIONALE DELLE COLONNE =================
+       FIX PRINCIPALE: i dati vengono mantenuti come MATRICE (array di array).
+       La colonna K è SEMPRE l'indice 10, la L l'11, la M il 12, la N il 13,
+       la O il 14, la P il 15, la Q il 16 — a prescindere dalle intestazioni.
+    */
+
+    function columnLetterFromIndex(index) {
+      let n = index + 1;
+      let letters = '';
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        letters = String.fromCharCode(65 + rem) + letters;
+        n = Math.floor((n - 1) / 26);
+      }
+      return letters;
+    }
+
+    function columnIndexFromLetter(letter) {
+      const name = (letter || '').toUpperCase().replace(/[^A-Z]/g, '');
+      if (!name) return -1;
+      let value = 0;
+      for (let i = 0; i < name.length; i++) value = value * 26 + (name.charCodeAt(i) - 64);
+      return value - 1;
+    }
+
+    function isBlankCell(c) {
+      return c === null || c === undefined || String(c).trim() === '';
+    }
+
+    function fmtCell(c) {
+      if (c === null || c === undefined) return '';
+      if (typeof c === 'number') {
+        if (Number.isInteger(c) && Math.abs(c) < 1e15) return String(c);
+        return c;
+      }
+      if (c instanceof Date) return String(c);
+      return String(c).trim();
+    }
+
+    // Converte una matrice grezza (prima riga = intestazioni) in tabella posizionale
+    function tableFromMatrix(rawMatrix) {
+      const matrix = (rawMatrix || []).map(r => Array.isArray(r) ? r.map(fmtCell) : []);
+      // salta eventuali righe iniziali completamente vuote
+      while (matrix.length && matrix[0].every(isBlankCell)) matrix.shift();
+      if (!matrix.length) return { headers: [], rows: [] };
+      const width = matrix.reduce((m, r) => Math.max(m, r.length), 0);
+      const headRow = matrix[0];
+      const headers = [];
+      for (let i = 0; i < width; i++) {
+        const label = String(headRow[i] ?? '').trim();
+        headers.push(label || ('Colonna ' + columnLetterFromIndex(i)));
+      }
+      const rows = [];
+      for (let i = 1; i < matrix.length; i++) {
+        const r = matrix[i].slice(0, width);
+        while (r.length < width) r.push('');
+        if (r.some(c => !isBlankCell(c))) rows.push(r);
+      }
+      return { headers, rows };
+    }
+
+    // Converte i vecchi dati salvati (oggetti per intestazione) nel nuovo formato
+    function coerceTable(data) {
+      if (!data) return null;
+      if (Array.isArray(data.matrix)) {
+        return tableFromMatrix([data.headers || [], ...data.matrix]);
+      }
+      if (Array.isArray(data.rows) && Array.isArray(data.headers)) {
+        const matrix = [data.headers, ...data.rows.map(r => data.headers.map(h => r[h] ?? ''))];
+        return tableFromMatrix(matrix);
+      }
+      return null;
+    }
+
+    // Risolve la colonna: prima per NOME intestazione esatto, poi per LETTERA (K=10, L=11, ...)
+    function resolveColumnIndex(spec, headers) {
+      const text = String(spec || '').trim();
+      if (!text) return -1;
+      const normalized = text.toLowerCase();
+      const byName = headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
+      if (byName >= 0) return byName;
+      if (/^[A-Za-z]{1,3}$/.test(text)) return columnIndexFromLetter(text);
+      const partial = headers.findIndex(h => String(h || '').trim().toLowerCase().includes(normalized));
+      return partial;
+    }
+
+    function toNumber(value) {
+      if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+      if (value === null || value === undefined) return 0;
+      let txt = String(value).trim().replace(/\s+/g, '');
+      if (!txt) return 0;
+      if (txt.includes(',')) txt = txt.replace(/\./g, '').replace(',', '.');
+      const parsed = parseFloat(txt);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function buildColumnsMeta(headers) {
+      const palette = ['#4CAF50', '#FF9800', '#2196F3', '#9C27B0', '#E91E63', '#00BCD4', '#795548', '#607D8B'];
+      return headers.map((header, index) => ({
+        letter: columnLetterFromIndex(index),
+        header: header || ('Colonna ' + columnLetterFromIndex(index)),
+        color: palette[index % palette.length]
+      }));
+    }
+
+    // Ricerca prodotti su una tabella posizionale — unica logica per tutte le sorgenti
+    function searchTable(table, params) {
+      const headers = table.headers || [];
+      const rows = table.rows || [];
+      if (!headers.length) return { ok: false, error: 'Tabella vuota o non leggibile.' };
+
+      if (params.action === 'meta') return { ok: true, columns: buildColumnsMeta(headers) };
+
+      const lastCol = columnLetterFromIndex(headers.length - 1);
+      const barcodeIndex = resolveColumnIndex(params.barcodeColumn, headers);
+      const nameIndex = resolveColumnIndex(params.nameColumn, headers);
+      const descIndex = resolveColumnIndex(params.descColumn, headers);
+      const photoIndex = resolveColumnIndex(params.photoColumn, headers);
+      const qtyIndex = resolveColumnIndex(params.qtyColumn, headers);
+
+      if (barcodeIndex < 0) return { ok: false, error: 'Colonna codice a barre "' + params.barcodeColumn + '" non trovata.' };
+      if (barcodeIndex >= headers.length) return { ok: false, error: 'La colonna codice a barre ' + params.barcodeColumn + ' non esiste nel foglio (ultima disponibile: ' + lastCol + ').' };
+      if (qtyIndex < 0) return { ok: false, error: 'Colonna quantità "' + params.qtyColumn + '" non trovata nel foglio.' };
+      if (qtyIndex >= headers.length) return { ok: false, error: 'La colonna quantità ' + params.qtyColumn + ' non esiste nel foglio: l\'ultima colonna disponibile è ' + lastCol + '. Verifica scheda (gid) e foglio corretti.' };
+
+      const cell = (row, i) => (i >= 0 && i < row.length ? row[i] : '');
+      const makeProduct = (row, rowIndex) => ({
+        barcode: String(cell(row, barcodeIndex) || '').trim(),
+        name: String(cell(row, nameIndex) || ''),
+        description: String(cell(row, descIndex) || ''),
+        photoUrl: String(cell(row, photoIndex) || ''),
+        quantity: toNumber(cell(row, qtyIndex)),
+        qtyColumn: normalizeColumnSpec(params.qtyColumn),
+        rowIndex
+      });
+
+      if (params.action === 'getProduct') {
+        const targetCode = String(params.barcode || '').trim();
+        const idx = rows.findIndex(r => String(cell(r, barcodeIndex) || '').trim() === targetCode);
+        if (idx < 0) return { ok: true, product: null };
+        return { ok: true, product: makeProduct(rows[idx], idx) };
+      }
+
+      if (params.action === 'listProductsForColumn') {
+        const products = [];
+        rows.forEach((row, rowIndex) => {
+          const p = makeProduct(row, rowIndex);
+          if (!p.barcode || p.quantity <= 0) return;
+          products.push(p);
+        });
+        return { ok: true, products };
+      }
+
+      return { ok: false, error: 'Azione non supportata.' };
+    }
+
+    /* ================= PARSER SORGENTI ================= */
 
     function parseCsvRows(text) {
       const rows = [];
@@ -268,49 +448,87 @@
       return rows;
     }
 
-    function columnLetterFromIndex(index) {
-      let n = index + 1;
-      let letters = '';
-      while (n > 0) {
-        const rem = (n - 1) % 26;
-        letters = String.fromCharCode(65 + rem) + letters;
-        n = Math.floor((n - 1) / 26);
+    // gviz JSON -> matrice posizionale (gli array r.c mantengono l'ordine esatto delle colonne)
+    function matrixFromGviz(text) {
+      const normalized = (text || '').trim();
+      if (!normalized) return [];
+      try {
+        const cleaned = normalized
+          .replace(/^\s*\]\s*}\s*/i, '')
+          .replace(/^\s*\/\*.*?\*\/\s*/s, '')
+          .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
+          .replace(/\)\s*;?\s*$/, '');
+        const payload = JSON.parse(cleaned);
+        const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
+        const gvizRows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
+        const headerRow = cols.map(c => (c && c.label ? String(c.label).trim() : ''));
+        const dataRows = gvizRows.map(r => (r && r.c ? r.c : []).map(cell =>
+          (cell && cell.v !== null && cell.v !== undefined) ? cell.v : ''
+        ));
+        return [headerRow, ...dataRows];
+      } catch (e) {
+        throw new Error('Risposta JSON del foglio Google non valida.');
       }
-      return letters;
     }
 
-    function columnIndexFromLetter(letter) {
-      const name = (letter || '').toUpperCase().replace(/[^A-Z]/g, '');
-      if (!name) return -1;
-      let value = 0;
-      for (let i = 0; i < name.length; i++) value = value * 26 + (name.charCodeAt(i) - 64);
-      return value - 1;
+    async function fetchGoogleSheetData(url, label) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const text = await res.text();
+      if (!res.ok) throw new Error(label + ' non raggiungibile: ' + res.status + ' ' + res.statusText);
+      const trimmed = (text || '').trim();
+      if (!trimmed) throw new Error(label + ' ha restituito un contenuto vuoto.');
+      if (/^<!doctype html|^<html/i.test(trimmed)) {
+        throw new Error('Il foglio non è pubblico oppure l\'ID è errato. Condividi il file come "Chiunque abbia il link".');
+      }
+      return text;
     }
 
-    function buildColumnsMeta(headers) {
-      const palette = ['#4CAF50', '#FF9800', '#2196F3', '#9C27B0', '#E91E63', '#00BCD4', '#795548', '#607D8B'];
-      return headers.map((header, index) => ({
-        letter: columnLetterFromIndex(index),
-        header: header || ('Colonna ' + columnLetterFromIndex(index)),
-        color: palette[index % palette.length]
-      }));
-    }
+    // Scarica e restituisce SEMPRE una tabella posizionale { headers, rows }
+    async function fetchSheetTable() {
+      const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
+      const sourceType = settings.sourceType || detectSourceType(settings.spreadsheetId || '');
 
-    function getHeaderIndexByColumnSpec(spec, headers) {
-      if (!spec) return -1;
-      const text = String(spec).trim();
-      if (!text) return -1;
-      const idx = columnIndexFromLetter(text);
-      if (idx >= 0) return idx;
-      const normalized = text.toLowerCase();
-      return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
-    }
+      if (sourceType === 'drive') {
+        // FIX: il file Drive è un xlsx BINARIO: va letto con la libreria XLSX, non come testo CSV
+        if (typeof XLSX === 'undefined') throw new Error('Libreria Excel non caricata: serve connessione internet.');
+        const res = await fetch('https://drive.google.com/uc?export=download&id=' + sheetId + '&_=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) throw new Error('File Drive non raggiungibile: ' + res.status + ' ' + res.statusText);
+        const buffer = await res.arrayBuffer();
+        const headText = new TextDecoder().decode(buffer.slice(0, 512)).trim();
+        if (/^<!doctype html|^<html/i.test(headText)) {
+          throw new Error('Il file Drive non è pubblico oppure richiede conferma. Condividilo come "Chiunque abbia il link".');
+        }
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const tabName = (settings.sheetTab && workbook.SheetNames.includes(settings.sheetTab)) ? settings.sheetTab : workbook.SheetNames[0];
+        if (!tabName) throw new Error('Il file non contiene fogli.');
+        const ws = workbook.Sheets[tabName];
+        const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
+        return tableFromMatrix(matrix);
+      }
 
-    function toNumber(value) {
-      if (value === null || value === undefined || value === '') return 0;
-      const txt = String(value).trim().replace('.', '').replace(',', '.');
-      const parsed = Number(txt);
-      return Number.isFinite(parsed) ? parsed : 0;
+      const gid = settings.sheetGid || '0';
+      const gvizBase = 'https://docs.google.com/spreadsheets/d/' + sheetId + '/gviz/tq?tqx=out:json';
+      const attempts = [];
+      // Se è stato indicato il nome della scheda, provalo per primo
+      if (settings.sheetTab) attempts.push({ kind: 'gviz', url: gvizBase + '&sheet=' + encodeURIComponent(settings.sheetTab) });
+      // CSV con il GID ESATTO preso dalla URL (fix: prima era sempre gid=0)
+      attempts.push({ kind: 'csv', url: 'https://docs.google.com/spreadsheets/d/' + sheetId + '/export?format=csv&gid=' + gid + '&_=' + Date.now() });
+      attempts.push({ kind: 'gviz', url: gvizBase + '&gid=' + encodeURIComponent(gid) });
+      attempts.push({ kind: 'gviz', url: gvizBase });
+
+      let lastError = null;
+      for (const attempt of attempts) {
+        try {
+          const text = await fetchGoogleSheetData(attempt.url, 'Foglio Google');
+          const matrix = attempt.kind === 'gviz' ? matrixFromGviz(text) : parseCsvRows(text);
+          const table = tableFromMatrix(matrix);
+          if (!table.headers.length) throw new Error('Il foglio è vuoto.');
+          return table;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error('Impossibile leggere il foglio. Verifica ID e permessi del file.');
     }
 
     function commonParams() {
@@ -327,188 +545,20 @@
     }
 
     function localSheetFetch(params) {
-      const data = settings.localSheetData || JSON.parse(localStorage.getItem('localSheetData') || 'null');
-      if (!data || !Array.isArray(data.rows)) return { ok: false, error: 'Nessun file locale caricato.' };
-      const headers = data.headers || [];
-      const rows = data.rows || [];
-
-      if (params.action === 'meta') return { ok: true, columns: buildColumnsMeta(headers) };
-
-      if (params.action === 'getProduct') {
-        const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-        const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-        const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-        const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-        const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-        const targetCode = String(params.barcode || '').trim();
-        const row = rows.find(r => {
-          const values = headers.map(h => r[h] ?? '');
-          const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
-          return codeValue === targetCode;
-        });
-        if (!row) return { ok: true, product: null };
-        const values = headers.map(h => row[h] ?? '');
-        return { ok: true, product: {
-          barcode: String(values[barcodeIndex] || ''),
-          name: String(values[nameIndex] || ''),
-          description: String(values[descIndex] || ''),
-          photoUrl: String(values[photoIndex] || ''),
-          quantity: toNumber(values[qtyIndex]),
-          qtyColumn: params.qtyColumn
-        }};
-      }
-
-      if (params.action === 'listProductsForColumn') {
-        const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-        const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-        const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-        const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-        const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-        const products = [];
-        rows.forEach((row, rowIndex) => {
-          const values = headers.map(h => row[h] ?? '');
-          const barcode = String(values[barcodeIndex] || '').trim();
-          const qty = toNumber(values[qtyIndex]);
-          if (!barcode || qty <= 0) return;
-          products.push({
-            barcode,
-            name: String(values[nameIndex] || ''),
-            description: String(values[descIndex] || ''),
-            photoUrl: String(values[photoIndex] || ''),
-            quantity: qty,
-            qtyColumn: params.qtyColumn,
-            rowIndex
-          });
-        });
-        return { ok: true, products };
-      }
-
-      return { ok: false, error: 'Azione non supportata per file locale.' };
-    }
-
-    async function fetchGoogleSheetData(url, label) {
-      const res = await fetch(url, { cache: 'no-store' });
-      const text = await res.text();
-      if (!res.ok) throw new Error(label + ' non raggiungibile: ' + res.status + ' ' + res.statusText);
-      const trimmed = (text || '').trim();
-      if (!trimmed) throw new Error(label + ' ha restituito un contenuto vuoto.');
-      if (/^<!doctype html|^<html|text\/html/i.test(trimmed) || trimmed.toLowerCase().includes('<html')) {
-        throw new Error('Il foglio non è pubblico oppure l’ID del foglio è errato.');
-      }
-      return text;
-    }
-
-    function parseGoogleSheetResponse(text) {
-      const normalized = (text || '').trim();
-      if (!normalized) return { headers: [], rows: [] };
-      try {
-        const cleaned = normalized
-          .replace(/^\s*\]\s*}\s*/i, '')
-          .replace(/^\s*\/\*.*?\*\/\s*/s, '')
-          .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
-          .replace(/\)\s*;?\s*$/, '');
-        const payload = JSON.parse(cleaned);
-        const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
-        const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
-        const headers = cols.map(c => (c && (c.label || c.id)) || '');
-        const data = rows.map(r => {
-          const values = r && r.c ? r.c : [];
-          const row = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
-          });
-          return row;
-        });
-        return { headers, rows: data };
-      } catch (e) {
-        throw new Error('Risposta JSON del foglio Google non valida.');
-      }
+      const rawData = settings.localSheetData || JSON.parse(localStorage.getItem('localSheetData') || 'null');
+      const table = coerceTable(rawData);
+      if (!table || !table.rows.length) return { ok: false, error: 'Nessun file locale caricato.' };
+      return searchTable(table, params);
     }
 
     async function directSheetFetch(params) {
       if (!settings.spreadsheetId) return { ok: false, error: 'ID foglio Google mancante.' };
-      const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
-      const sourceType = settings.sourceType || detectSourceType(settings.spreadsheetId || '');
-      const urls = sourceType === 'drive'
-        ? [`https://drive.google.com/uc?export=download&id=${sheetId}`]
-        : [`https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`, `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent('Foglio1')}`];
-
-      let lastError = null;
-      for (const url of urls) {
-        try {
-          const text = await fetchGoogleSheetData(url, 'Foglio Google');
-          let headers = [];
-          let rows = [];
-          if (url.includes('/gviz/')) {
-            const parsed = parseGoogleSheetResponse(text);
-            headers = parsed.headers;
-            rows = parsed.rows;
-          } else {
-            const csvRows = parseCsvRows(text);
-            if (!csvRows.length) throw new Error('Il foglio CSV è vuoto.');
-            headers = csvRows[0].map((h, idx) => (h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
-            rows = csvRows.slice(1).map(values => {
-              const row = {};
-              headers.forEach((header, index) => {
-                row[header] = values[index] !== undefined ? values[index].trim() : '';
-              });
-              return row;
-            });
-          }
-          if (params.action === 'meta') return { ok: true, columns: buildColumnsMeta(headers) };
-          if (params.action === 'getProduct') {
-            const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-            const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-            const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-            const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-            const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-            const targetCode = String(params.barcode || '').trim();
-            const productRow = rows.find(row => {
-              const values = headers.map(h => row[h] ?? '');
-              const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
-              return codeValue === targetCode;
-            });
-            if (!productRow) return { ok: true, product: null };
-            const values = headers.map(h => productRow[h] ?? '');
-            return { ok: true, product: {
-              barcode: String(values[barcodeIndex] || ''),
-              name: String(values[nameIndex] || ''),
-              description: String(values[descIndex] || ''),
-              photoUrl: String(values[photoIndex] || ''),
-              quantity: toNumber(values[qtyIndex]),
-              qtyColumn: params.qtyColumn
-            }};
-          }
-          if (params.action === 'listProductsForColumn') {
-            const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-            const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-            const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-            const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-            const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-            const products = [];
-            rows.forEach((row, rowIndex) => {
-              const values = headers.map(h => row[h] ?? '');
-              const barcode = String(values[barcodeIndex] || '').trim();
-              const qty = toNumber(values[qtyIndex]);
-              if (!barcode || qty <= 0) return;
-              products.push({
-                barcode,
-                name: String(values[nameIndex] || ''),
-                description: String(values[descIndex] || ''),
-                photoUrl: String(values[photoIndex] || ''),
-                quantity: qty,
-                qtyColumn: params.qtyColumn,
-                rowIndex
-              });
-            });
-            return { ok: true, products };
-          }
-          return { ok: false, error: 'Azione non supportata.' };
-        } catch (err) {
-          lastError = err;
-        }
+      try {
+        const table = await fetchSheetTable();
+        return searchTable(table, params);
+      } catch (e) {
+        return { ok: false, error: e.message };
       }
-      return { ok: false, error: lastError ? lastError.message : 'Impossibile leggere il foglio. Verifica ID e permessi del file.' };
     }
 
     async function apiGet(params) {
@@ -517,6 +567,53 @@
       if (settings.localSheetData) return localSheetFetch(params);
       throw new Error('Inserisci un link Drive, un ID del foglio Google oppure carica un file locale.');
     }
+
+    /* ================= CONTEGGI CON RILEVAZIONE CAMBI VALORE =================
+       Ogni conteggio salvato include il "base" = valore letto dal foglio.
+       Se il gestore CAMBIA il valore nella colonna (K, L, M...), alla prossima
+       lettura il valore base non corrisponde più e il conteggio si riallinea
+       automaticamente al nuovo valore del foglio.
+    */
+
+    function countKey(p) {
+      return 'count_' + p.barcode + '_' + p.qtyColumn;
+    }
+
+    function getStoredCount(key) {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return { remaining: Number(parsed.remaining), base: parsed.base ?? null };
+        }
+      } catch (e) {}
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? { remaining: n, base: null } : null;
+    }
+
+    function setStoredCount(key, remaining, base) {
+      localStorage.setItem(key, JSON.stringify({ remaining, base, updated: Date.now() }));
+    }
+
+    // Ritorna i pezzi rimanenti, riallineandosi se il valore nel foglio è cambiato
+    function remainingFor(p, decrement) {
+      const key = countKey(p);
+      const stored = getStoredCount(key);
+      let before;
+      if (!stored) {
+        before = p.quantity;
+      } else if (stored.base !== null && Number(stored.base) !== Number(p.quantity)) {
+        before = p.quantity; // valore nella colonna cambiato -> riparti dal nuovo valore
+      } else {
+        before = Number(stored.remaining);
+      }
+      if (!Number.isFinite(before)) before = p.quantity;
+      const remaining = decrement ? Math.max(before - 1, 0) : Math.max(before, 0);
+      return { key, before, remaining };
+    }
+
+    /* ================= UI ================= */
 
     function renderColIndicator() {
       const col = columnsMeta.find(c => c.letter === settings.activeQtyColumn);
@@ -534,7 +631,7 @@
       columnsMeta.forEach(col => {
         const div = document.createElement('div');
         div.className = 'colitem' + (col.letter === settings.activeQtyColumn ? ' sel' : '');
-        div.innerHTML = '<span class="swatch" style="background:' + col.color + '"></span><b>' + col.letter + '</b>&nbsp;-&nbsp;' + (col.header || '(senza nome)');
+        div.innerHTML = '<span class="swatch" style="background:' + col.color + '"></span><b>' + col.letter + '</b> - ' + (col.header || '(senza nome)');
         div.onclick = async () => {
           settings.activeQtyColumn = col.letter;
           saveSettings();
@@ -551,6 +648,7 @@
 
     function fillSettingsForm() {
       $('sSheet').value = settings.spreadsheetId;
+      $('sSheetTab').value = settings.sheetTab || '';
       $('sBarcodeCol').value = settings.barcodeColumn;
       $('sNameCol').value = settings.nameColumn;
       $('sDescCol').value = settings.descColumn;
@@ -559,7 +657,7 @@
     }
 
     function resetColumnCounters(column) {
-      const col = String(column || settings.activeQtyColumn || '').trim();
+      const col = normalizeColumnSpec(column || settings.activeQtyColumn || '');
       if (!col) return;
       Object.keys(localStorage)
         .filter(key => key.startsWith('count_') && key.endsWith('_' + col))
@@ -614,9 +712,10 @@
       }
       const product = autoQueue[autoIndex];
       currentProduct = product;
-      renderProduct(product, Number(product.quantity) || 0);
+      const { remaining } = remainingFor(product, false);
+      renderProduct(product, remaining);
       renderQueueList();
-      showMsg(`Prodotto ${autoIndex + 1} di ${autoQueue.length}: ${product.name || 'Prodotto'} - ${product.quantity} pezzi`);
+      showMsg('Prodotto ' + (autoIndex + 1) + ' di ' + autoQueue.length + ': ' + (product.name || 'Prodotto') + ' - ' + product.quantity + ' pezzi');
     }
 
     function renderProduct(p, remaining) {
@@ -644,7 +743,7 @@
 
       resetColumnCounters(settings.activeQtyColumn);
       clearAutoQueueState();
-      showMsg('Carico prodotti della colonna...');
+      showMsg('Carico prodotti della colonna ' + settings.activeQtyColumn + '...');
 
       try {
         const res = await apiGet(Object.assign({ action: 'listProductsForColumn' }, commonParams()));
@@ -663,7 +762,7 @@
           autoIndex = 0;
           autoMode = false;
           renderQueueList();
-          showMsg('Nessun prodotto con quantità valida in questa colonna.', true);
+          showMsg('Nessun prodotto con quantità > 0 nella colonna ' + settings.activeQtyColumn + '.', true);
           return;
         }
 
@@ -672,13 +771,42 @@
         autoMode = true;
         renderQueueList();
         showNextAutoProduct();
-        showMsg('Colonna avviata. Inquadra il codice del prodotto corrente.', false);
+        showMsg('Colonna ' + settings.activeQtyColumn + ' avviata. Inquadra il codice del prodotto corrente.', false);
       } catch (e) {
         autoQueue = [];
         autoIndex = 0;
         autoMode = false;
         renderQueueList();
         showMsg('Errore caricamento colonna: ' + e.message, true);
+      }
+    }
+
+    // Rilegge il prodotto corrente dal foglio e riallinea il countdown se il
+    // valore nella colonna attiva (K, L, M...) è cambiato
+    async function refreshCurrentFromSource() {
+      const target = (autoMode && autoQueue.length && autoIndex < autoQueue.length) ? autoQueue[autoIndex] : currentProduct;
+      if (!target) {
+        showMsg('Nessun prodotto attivo. Avvia prima una colonna o scansione un codice.', true);
+        return;
+      }
+      showMsg('Aggiornamento valori dalla colonna ' + settings.activeQtyColumn + '...');
+      try {
+        const res = await apiGet(Object.assign({ action: 'getProduct', barcode: target.barcode }, commonParams()));
+        if (!res.ok) { showMsg(res.error, true); return; }
+        if (!res.product) { showMsg('Prodotto non trovato nel foglio', true); return; }
+        const fresh = res.product;
+        if (autoMode && autoQueue[autoIndex]) {
+          autoQueue[autoIndex].quantity = fresh.quantity;
+          autoQueue[autoIndex].name = fresh.name;
+        }
+        const { key, remaining } = remainingFor(fresh, false);
+        setStoredCount(key, remaining, fresh.quantity);
+        currentProduct = fresh;
+        renderProduct(fresh, remaining);
+        renderQueueList();
+        showMsg('Aggiornato dalla colonna ' + settings.activeQtyColumn + ': ' + (fresh.name || 'Prodotto') + ' = ' + fresh.quantity + ' pezzi.');
+      } catch (e) {
+        showMsg('Errore aggiornamento: ' + e.message, true);
       }
     }
 
@@ -715,12 +843,16 @@
 
           const p = res.product;
           currentProduct = p;
-          const key = 'count_' + p.barcode + '_' + p.qtyColumn;
-          const stored = localStorage.getItem(key);
-          const before = stored === null ? p.quantity : (parseInt(stored, 10) || p.quantity);
-          const remaining = Math.max(before - 1, 0);
-          localStorage.setItem(key, String(remaining));
-          historyStack.push({ key, before });
+
+          // riallinea la coda se il gestore ha cambiato il valore nella colonna
+          if (autoMode && autoQueue[autoIndex] && Number(autoQueue[autoIndex].quantity) !== Number(p.quantity)) {
+            autoQueue[autoIndex].quantity = p.quantity;
+            renderQueueList();
+          }
+
+          const { key, before, remaining } = remainingFor(p, true);
+          setStoredCount(key, remaining, p.quantity);
+          historyStack.push({ key, before, base: p.quantity });
           renderProduct(p, remaining);
 
           if (autoMode) {
@@ -873,10 +1005,11 @@
 
     $('startWorkBtn').onclick = () => startColumnSequence();
     $('startColumnBtn').onclick = () => startColumnSequence();
+    $('refreshBtn').onclick = () => refreshCurrentFromSource();
     $('saveProductBtn').onclick = saveProductForm;
 
     $('startSelectedColumnBtn').onclick = () => {
-      settings.activeQtyColumn = ($('sQtyCol').value.trim() || settings.activeQtyColumn);
+      settings.activeQtyColumn = normalizeColumnSpec($('sQtyCol').value) || settings.activeQtyColumn;
       saveSettings();
       renderColIndicator();
       renderColList();
@@ -903,7 +1036,7 @@
         return;
       }
       const last = historyStack.pop();
-      localStorage.setItem(last.key, String(last.before));
+      setStoredCount(last.key, last.before, last.base ?? null);
       showMsg('Annullato. Riportato a ' + last.before);
       if (currentProduct) renderProduct(currentProduct, last.before);
     };
@@ -952,12 +1085,16 @@
     $('backToScannerBtn').onclick = () => showView('viewScanner');
 
     $('saveSettingsBtn').onclick = async () => {
-      settings.spreadsheetId = $('sSheet').value.trim();
-      settings.barcodeColumn = $('sBarcodeCol').value.trim() || settings.barcodeColumn;
-      settings.nameColumn = $('sNameCol').value.trim() || settings.nameColumn;
-      settings.descColumn = $('sDescCol').value.trim() || settings.descColumn;
-      settings.photoColumn = $('sPhotoCol').value.trim() || settings.photoColumn;
-      settings.activeQtyColumn = $('sQtyCol').value.trim() || settings.activeQtyColumn;
+      const rawSheet = $('sSheet').value.trim();
+      const gid = extractGid(rawSheet);
+      if (gid) settings.sheetGid = gid;
+      settings.spreadsheetId = rawSheet;
+      settings.sheetTab = $('sSheetTab').value.trim();
+      settings.barcodeColumn = normalizeColumnSpec($('sBarcodeCol').value) || settings.barcodeColumn;
+      settings.nameColumn = normalizeColumnSpec($('sNameCol').value) || settings.nameColumn;
+      settings.descColumn = normalizeColumnSpec($('sDescCol').value) || settings.descColumn;
+      settings.photoColumn = normalizeColumnSpec($('sPhotoCol').value) || settings.photoColumn;
+      settings.activeQtyColumn = normalizeColumnSpec($('sQtyCol').value) || settings.activeQtyColumn;
       settings.sourceType = detectSourceType(settings.spreadsheetId || '');
       saveSettings();
       loadMeta();
@@ -970,27 +1107,25 @@
         showMsg('Seleziona un file Excel o CSV.', true);
         return;
       }
+      if (typeof XLSX === 'undefined') {
+        showMsg('Libreria Excel non caricata: serve connessione internet.', true);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
           const binary = e.target.result;
           const workbook = XLSX.read(binary, { type: 'array' });
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(sheet, { raw: false, defval: '' });
-          const headers = Object.keys(rows[0] || {});
-          const data = {
-            headers,
-            rows: rows.map(r => {
-              const obj = {};
-              headers.forEach(h => obj[h] = String(r[h] || ''));
-              return obj;
-            })
-          };
-          settings.localSheetData = data;
+          const tabName = (settings.sheetTab && workbook.SheetNames.includes(settings.sheetTab)) ? settings.sheetTab : workbook.SheetNames[0];
+          const sheet = workbook.Sheets[tabName];
+          // FIX: header:1 => matrice posizionale: la colonna K è SEMPRE l'indice 10, ecc.
+          const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '', blankrows: true });
+          const table = tableFromMatrix(matrix);
+          settings.localSheetData = { headers: table.headers, matrix: table.rows };
           settings.sourceType = 'local';
           saveSettings();
           loadMeta();
-          showMsg('File locale caricato.');
+          showMsg('File locale caricato (' + table.rows.length + ' righe, colonne fino a ' + columnLetterFromIndex(Math.max(table.headers.length - 1, 0)) + ').');
         } catch (err) {
           showMsg('Errore file locale: ' + err.message, true);
         }
