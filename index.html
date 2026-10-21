@@ -133,28 +133,34 @@ function normalizeSpreadsheetId(value){
   const raw = String(value).trim();
   if(!raw) return '';
 
+  const drivePatterns = [
+    /(?:https?:\/\/)?drive\.google\.com\/file\/d\/([a-z0-9_-]{10,})/i,
+    /(?:https?:\/\/)?drive\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+    /(?:https?:\/\/)?drive\.google\.com\/open\?id=([a-z0-9_-]{10,})/i,
+    /(?:[?&]id=)([a-z0-9_-]{10,})/i,
+    /(?:https?:\/\/)?docs\.google\.com\/spreadsheets\/d\/([a-z0-9_-]{10,})/i,
+    /(?:https?:\/\/)?docs\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+    /(?:https?:\/\/)?spreadsheets\.google\.com\/d\/([a-z0-9_-]{10,})/i,
+    /key=([a-z0-9_-]+)/i,
+    /^([a-z0-9_-]{10,})$/i
+  ];
+
+  for (const pattern of drivePatterns) {
+    const m = raw.match(pattern);
+    if (m && m[1]) return m[1];
+  }
+
   try {
     const u = new URL(raw);
-    const host = (u.hostname || '').toLowerCase();
     const path = (u.pathname || '').toLowerCase();
-
-    if (host.includes('docs.google.com')) {
-      const m = path.match(/\/spreadsheets\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i);
-      if (m && m[1]) return m[1];
-      const qid = u.searchParams.get('id');
-      if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
-    }
-
-    if (host.includes('drive.google.com')) {
-      const m = path.match(/\/file\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i);
+    const host = (u.hostname || '').toLowerCase();
+    if (host.includes('docs.google.com') || host.includes('drive.google.com')) {
+      const m = path.match(/\/spreadsheets\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/d\/([a-z0-9_-]{10,})/i) || path.match(/\/file\/d\/([a-z0-9_-]{10,})/i);
       if (m && m[1]) return m[1];
       const qid = u.searchParams.get('id');
       if (qid && /^[a-z0-9_-]{10,}$/i.test(qid)) return qid;
     }
   } catch (e) {}
-
-  const m = raw.match(/(?:\/spreadsheets\/d\/|\/file\/d\/|\/d\/|id=)([a-z0-9_-]{10,})/i) || raw.match(/key=([a-z0-9_-]+)/i) || raw.match(/^([a-z0-9_-]{10,})$/i);
-  if (m && m[1]) return m[1];
 
   return raw;
 }
@@ -163,7 +169,8 @@ function detectSourceType(value){
   const raw = (value || '').trim();
   if (!raw) return 'sheet';
   const low = raw.toLowerCase();
-  if (low.includes('drive.google.com/file/d/') || low.includes('/file/d/') || low.includes('drive.google.com/uc?') || low.includes('export=download')) return 'drive';
+  if (low.includes('drive.google.com') || low.includes('/file/d/') || (low.includes('/d/') && low.includes('drive.google.com'))) return 'drive';
+  if (low.includes('docs.google.com/spreadsheets') || low.includes('/spreadsheets/d/')) return 'sheet';
   return 'sheet';
 }
 
@@ -171,8 +178,9 @@ function loadSettings(){
   try {
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
-    if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
-    normalized.sourceType = detectSourceType(normalized.spreadsheetId || parsed.spreadsheetId || '');
+    const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
+    if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
+    normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -214,14 +222,18 @@ function columnIndexFromLetter(letter){
   return value - 1;
 }
 
+function spreadsheetBaseUrl(sheetId){
+  return `https://docs.google.com/spreadsheets/d/${sheetId}`;
+}
+
 function googleSheetGvizUrl(sheetId, sheetName){
   const name = (sheetName || '').trim();
-  const base = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
+  const base = spreadsheetBaseUrl(sheetId) + '/gviz/tq?tqx=out:json';
   return name ? `${base}&sheet=${encodeURIComponent(name)}` : `${base}&sheet=${encodeURIComponent('Foglio1')}`;
 }
 
 function googleSheetCsvUrl(sheetId){
-  return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+  return `${spreadsheetBaseUrl(sheetId)}/export?format=csv&gid=0`;
 }
 
 function googleDriveCsvUrl(fileId){
@@ -234,8 +246,10 @@ function parseGoogleSheetResponse(text){
 
   try {
     const cleaned = normalized
-      .replace(/^google\.visualization\.Query\.setResponse\(/, '')
-      .replace(/\);?\s*$/, '');
+      .replace(/^\s*\]\s*}'\s*/i, '')
+      .replace(/^\s*\/\*.*?\*\/\s*/s, '')
+      .replace(/^\s*google\.visualization\.Query\.setResponse\s*\(/, '')
+      .replace(/\)\s*;?\s*$/, '');
     const payload = JSON.parse(cleaned);
     const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
     const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
