@@ -339,6 +339,13 @@ function getHeaderIndexByColumnSpec(columnSpec, headers){
   return headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
 }
 
+function toNumber(value){
+  if (value === null || value === undefined || value === '') return 0;
+  const txt = String(value).trim().replace('.', '').replace(',', '.');
+  const parsed = Number(txt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
 function beep(long){ try{
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -441,7 +448,7 @@ function localSheetFetch(params){
       name: String(values[nameIndex] ?? ''),
       description: String(values[descIndex] ?? ''),
       photoUrl: String(values[photoIndex] ?? ''),
-      quantity: Number(values[qtyIndex] || 0),
+      quantity: toNumber(values[qtyIndex]),
       qtyColumn: params.qtyColumn
     } };
   }
@@ -454,11 +461,10 @@ function localSheetFetch(params){
     const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
 
     const products = [];
-    rows.forEach(row => {
+    rows.forEach((row, rowIndex) => {
       const values = headers.map(h => row[h] ?? '');
       const barcode = String(values[barcodeIndex] ?? '').trim();
-      const qtyRaw = String(values[qtyIndex] ?? '').trim();
-      const qty = Number(qtyRaw.replace(',', '.')) || 0;
+      const qty = toNumber(values[qtyIndex]);
       if (!barcode || qty <= 0) return;
       products.push({
         barcode,
@@ -466,7 +472,8 @@ function localSheetFetch(params){
         description: String(values[descIndex] ?? ''),
         photoUrl: String(values[photoIndex] ?? ''),
         quantity: qty,
-        qtyColumn: params.qtyColumn
+        qtyColumn: params.qtyColumn,
+        rowIndex
       });
     });
     return { ok:true, products };
@@ -558,7 +565,7 @@ async function directSheetFetch(params){
           name: String(values[nameIndex] ?? ''),
           description: String(values[descIndex] ?? ''),
           photoUrl: String(values[photoIndex] ?? ''),
-          quantity: Number(values[qtyIndex] || 0),
+          quantity: toNumber(values[qtyIndex]),
           qtyColumn: params.qtyColumn
         };
         return { ok:true, product };
@@ -572,11 +579,10 @@ async function directSheetFetch(params){
         const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
 
         const products = [];
-        rows.forEach(row => {
+        rows.forEach((row, rowIndex) => {
           const values = headers.map(h => row[h] ?? '');
           const barcode = String(values[barcodeIndex] ?? '').trim();
-          const qtyRaw = String(values[qtyIndex] ?? '').trim();
-          const qty = Number(qtyRaw.replace(',', '.')) || 0;
+          const qty = toNumber(values[qtyIndex]);
           if (!barcode || qty <= 0) return;
           products.push({
             barcode,
@@ -584,7 +590,8 @@ async function directSheetFetch(params){
             description: String(values[descIndex] ?? ''),
             photoUrl: String(values[photoIndex] ?? ''),
             quantity: qty,
-            qtyColumn: params.qtyColumn
+            qtyColumn: params.qtyColumn,
+            rowIndex
           });
         });
 
@@ -742,7 +749,11 @@ async function startColumnSequence(){
       return;
     }
 
-    const items = (res.products || []).filter(p => Number(p.quantity) > 0 && (p.barcode || '').trim());
+    const items = (res.products || [])
+      .filter(p => (p.barcode || '').trim())
+      .filter(p => Number(p.quantity) > 0)
+      .map(p => ({ ...p }));
+
     if (!items.length) {
       autoQueue = [];
       autoMode = false;
@@ -769,29 +780,53 @@ async function startColumnSequence(){
   }
 }
 
+function canProcessCurrentProduct(code){
+  if (!autoMode || !autoQueue.length) return true;
+  const current = autoQueue[autoIndex];
+  if (!current) return true;
+  return String(code).trim() === String(current.barcode || '').trim();
+}
+
+function processAutoProductMatch(code){
+  if (!autoMode || !autoQueue.length) return true;
+  const current = autoQueue[autoIndex];
+  if (!current) {
+    finishAutoSequence();
+    return false;
+  }
+  if (String(code).trim() !== String(current.barcode || '').trim()) {
+    showMsg('Codice sbagliato: serve ' + (current.name || current.barcode), true);
+    speak('Codice sbagliato');
+    beep(true);
+    return false;
+  }
+  return true;
+}
+
 function handleBarcode(code){
-  showMsg('Ricerca: '+code+' ...');
-  apiGet(Object.assign({action:'getProduct',barcode:code}, commonParams()))
+  const normalizedCode = String(code || '').trim();
+  showMsg('Ricerca: ' + normalizedCode + ' ...');
+
+  if (autoMode && !processAutoProductMatch(normalizedCode)) {
+    return;
+  }
+
+  apiGet(Object.assign({action:'getProduct',barcode:normalizedCode}, commonParams()))
     .then(res=>{
       if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
       if(!res.product){
-        if (autoMode && currentProduct && String(code).trim() !== String(currentProduct.barcode || '').trim()) {
-          showMsg('Codice sbagliato: serve ' + (currentProduct.name || currentProduct.barcode), true);
-          speak('Codice sbagliato');
-          beep(true);
-          return;
-        }
         showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return;
       }
-      const p=res.product; currentProduct=p;
-      if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
+
+      const p = res.product;
+      currentProduct = p;
       const key='count_'+p.barcode+'_'+p.qtyColumn;
       const stored=localStorage.getItem(key);
-      const before = stored===null ? p.quantity : parseInt(stored);
-      const remaining=Math.max(before-1,0);
-      localStorage.setItem(key,String(remaining));
-      historyStack.push({key:key,before:before});
-      renderProduct(p,remaining);
+      const before = stored===null ? p.quantity : parseInt(stored,10) || p.quantity;
+      const remaining = Math.max(before - 1, 0);
+      localStorage.setItem(key, String(remaining));
+      historyStack.push({key, before});
+      renderProduct(p, remaining);
 
       if (autoMode) {
         if (remaining === 0) {
@@ -810,8 +845,9 @@ function handleBarcode(code){
           }, 900);
           return;
         }
-        showMsg('Mancano '+remaining+' per '+(p.name || 'Prodotto'));
-        speak('Mancano '+remaining);
+
+        showMsg('Mancano ' + remaining + ' per ' + (p.name || 'Prodotto'));
+        speak('Mancano ' + remaining);
         beep(false);
         vibrate(false);
         return;
