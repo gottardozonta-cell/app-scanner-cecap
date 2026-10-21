@@ -88,7 +88,7 @@
 
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
-  <label>ID foglio Google</label><input id="sSheet">
+  <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
   <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
   <div id="gestoreSettings" class="hidden">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
@@ -130,9 +130,25 @@ let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
 
+function normalizeSpreadsheetId(value){
+  if(!value) return '';
+  const str = String(value).trim();
+  if(!str) return '';
+  const match = str.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/i) || str.match(/key=([A-Za-z0-9_-]+)/i);
+  if (match && match[1]) return match[1];
+  if (/^[A-Za-z0-9_-]{10,}$/.test(str)) return str;
+  return str;
+}
+
 function loadSettings(){
-  try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }
-  catch(e){ return Object.assign({}, DEFAULTS); }
+  try{
+    const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
+    const normalized = Object.assign({}, DEFAULTS, parsed);
+    if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
+    return normalized;
+  } catch(e){
+    return Object.assign({}, DEFAULTS);
+  }
 }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
@@ -231,7 +247,7 @@ function normalizeDriveFileUrl(raw){
   if(!raw) return '';
   const value = raw.trim();
   if(!value) return '';
-  const googleId = value.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/);
+  const googleId = value.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/i);
   if(googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
   if(/^https?:\/\//i.test(value)) return value;
   if(/^[A-Za-z0-9_-]{10,}$/.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
@@ -318,9 +334,7 @@ async function directSheetFetch(params){
         return codeValue === targetCode;
       });
 
-      if(!productRow) {
-        return { ok:true, product:null };
-      }
+      if(!productRow) return { ok:true, product:null };
 
       const values = headers.map(h => productRow[h] ?? '');
       const product = {
@@ -522,7 +536,7 @@ function fillSettingsForm(){
 }
 
 $('saveSettingsBtn').onclick=()=>{
-  settings.spreadsheetId = $('sSheet').value.trim();
+  settings.spreadsheetId = normalizeSpreadsheetId($('sSheet').value.trim());
   settings.sheetName = $('sTab').value.trim() || 'Foglio1';
   if(role==='GESTORE'){
     settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
@@ -543,7 +557,7 @@ $('saveProductBtn').onclick=async ()=>{
     showMsg('Inserisci prima ID del foglio Google nelle impostazioni.',true); return;
   }
   if(!settings.scriptUrl && settings.spreadsheetId){
-    showMsg('La scrittura diretta su Google Sheet richiede OAuth o Apps Script. In questa versione la lettura è diretta, la scrittura resta su backend.',true);
+    showMsg('La lettura è diretta dal foglio Google. La scrittura richiede OAuth o un backend Apps Script.',true);
     return;
   }
 
