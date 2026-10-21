@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Magazzino Facile</title>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   * { box-sizing: border-box; font-family: Arial, sans-serif; }
   body { margin:0; background:#f5f5f5; }
@@ -74,6 +75,7 @@
     <div style="font-size:18px; font-weight:bold; margin-bottom:6px;">Prodotti da lavorare</div>
     <div id="queueContent" class="queue-list"></div>
   </div>
+  <button class="big btn-primary" id="startWorkBtn">AVVIA LAVORO</button>
   <button class="big btn-primary hidden" id="startColumnBtn">AVVIA COLONNA</button>
   <button class="big btn-orange hidden" id="nextAutoBtn">PROSSIMO PRODOTTO</button>
   <button class="big btn-orange" id="undoBtn">&#8617; INDIETRO (annulla ultima scansione)</button>
@@ -98,6 +100,8 @@
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
   <label>ID foglio Google / link Drive</label><input id="sSheet" placeholder="https://docs.google.com/spreadsheets/d/... oppure ID del foglio">
+  <label>File Excel locale (.xlsx, .xls, .csv)</label><input id="sLocalFile" type="file" accept=".xlsx,.xls,.csv">
+  <button class="big btn-primary" id="loadLocalFileBtn">CARICA FILE LOCALE</button>
   <div id="gestoreSettings" class="hidden">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
@@ -127,7 +131,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sourceType:'sheet', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sourceType:'sheet', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K', localSheetData: null };
 
 let settings = loadSettings();
 let role = localStorage.getItem('role') || 'MAGAZZINIERE';
@@ -193,6 +197,7 @@ function loadSettings(){
     const rawSpreadsheet = parsed.spreadsheetId || normalized.spreadsheetId || '';
     if (rawSpreadsheet) normalized.spreadsheetId = normalizeSpreadsheetId(rawSpreadsheet);
     normalized.sourceType = detectSourceType(rawSpreadsheet || normalized.spreadsheetId || '');
+    normalized.localSheetData = parsed.localSheetData || normalized.localSheetData || null;
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -401,6 +406,75 @@ function commonParams(){
   };
 }
 
+function localSheetFetch(params){
+  const data = settings.localSheetData || JSON.parse(localStorage.getItem('localSheetData') || 'null');
+  if (!data || !Array.isArray(data.rows)) {
+    return { ok:false, error:'Nessun file locale caricato.' };
+  }
+
+  const headers = data.headers || [];
+  const rows = data.rows || [];
+
+  if (params.action === 'meta') {
+    return { ok:true, columns: buildColumnsMeta(headers) };
+  }
+
+  if (params.action === 'getProduct') {
+    const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+    const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+    const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+    const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+    const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+    const targetCode = String(params.barcode || '').trim();
+
+    const productRow = rows.find(row => {
+      const values = headers.map(h => row[h] ?? '');
+      const codeValue = barcodeIndex >= 0 ? String(values[barcodeIndex] || '').trim() : '';
+      return codeValue === targetCode;
+    });
+
+    if (!productRow) return { ok:true, product:null };
+
+    const values = headers.map(h => productRow[h] ?? '');
+    return { ok:true, product: {
+      barcode: String(values[barcodeIndex] ?? ''),
+      name: String(values[nameIndex] ?? ''),
+      description: String(values[descIndex] ?? ''),
+      photoUrl: String(values[photoIndex] ?? ''),
+      quantity: Number(values[qtyIndex] || 0),
+      qtyColumn: params.qtyColumn
+    } };
+  }
+
+  if (params.action === 'listProductsForColumn') {
+    const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+    const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+    const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+    const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+    const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+
+    const products = [];
+    rows.forEach(row => {
+      const values = headers.map(h => row[h] ?? '');
+      const barcode = String(values[barcodeIndex] ?? '').trim();
+      const qtyRaw = String(values[qtyIndex] ?? '').trim();
+      const qty = Number(qtyRaw.replace(',', '.')) || 0;
+      if (!barcode || qty <= 0) return;
+      products.push({
+        barcode,
+        name: String(values[nameIndex] ?? ''),
+        description: String(values[descIndex] ?? ''),
+        photoUrl: String(values[photoIndex] ?? ''),
+        quantity: qty,
+        qtyColumn: params.qtyColumn
+      });
+    });
+    return { ok:true, products };
+  }
+
+  return { ok:false, error:'Azione non supportata per file locale.' };
+}
+
 async function fetchGoogleSheetData(url, label){
   const res = await fetch(url, { cache: 'no-store' });
   const text = await res.text();
@@ -528,6 +602,10 @@ async function directSheetFetch(params){
 }
 
 async function apiGet(params){
+  if (settings.sourceType === 'local' && settings.localSheetData) {
+    return localSheetFetch(params);
+  }
+
   if (settings.scriptUrl && isAppsScriptUrl(settings.scriptUrl)) {
     const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
     const sep = settings.scriptUrl.includes('?') ? '&' : '?';
@@ -552,12 +630,16 @@ async function apiGet(params){
     return await directSheetFetch(params);
   }
 
-  throw new Error('Inserisci un link Drive o un ID del foglio Google.');
+  if (settings.localSheetData) {
+    return localSheetFetch(params);
+  }
+
+  throw new Error('Inserisci un link Drive, un ID del foglio Google oppure carica un file locale.');
 }
 
 function loadMeta(){
-  if(!settings.spreadsheetId && !settings.scriptUrl){
-    showMsg('Vai in IMPOSTAZIONI e inserisci l\'ID del foglio Google o il link Drive.', true);
+  if(!settings.spreadsheetId && !settings.scriptUrl && !settings.localSheetData){
+    showMsg('Vai in IMPOSTAZIONI e inserisci l\'ID del foglio Google, il link Drive o carica un file locale.', true);
     return;
   }
   apiGet(Object.assign({action:'meta'}, commonParams()))
@@ -647,12 +729,8 @@ function showNextAutoProduct(){
 }
 
 async function startColumnSequence(){
-  if (!settings.spreadsheetId) {
-    showMsg('Inserisci prima il foglio Google nelle impostazioni.', true);
-    return;
-  }
-  if (role !== 'GESTORE') {
-    showMsg('Devi essere nel ruolo Gestore per avviare la colonna.', true);
+  if (!settings.spreadsheetId && !settings.localSheetData) {
+    showMsg('Inserisci prima il foglio Google, il link Drive o carica un file locale.', true);
     return;
   }
 
@@ -758,6 +836,7 @@ function renderProduct(p,remaining){
   $('productCard').classList.remove('hidden');
 }
 
+$('startWorkBtn').onclick=()=>startColumnSequence();
 $('startColumnBtn').onclick=()=>startColumnSequence();
 $('nextAutoBtn').onclick=()=>{
   if (!autoQueue.length) {
@@ -804,6 +883,7 @@ function applyRole(){
   $('gestoreSettings').classList.toggle('hidden',!isG);
   $('startColumnBtn').classList.toggle('hidden',!isG);
   $('nextAutoBtn').classList.toggle('hidden',!isG);
+  $('startWorkBtn').classList.toggle('hidden', isG);
   if(!isG){ showView('viewScanner'); }
 }
 $('authBtn').onclick=()=>{
@@ -854,6 +934,54 @@ function fillSettingsForm(){
   $('sQtyCol').value = settings.activeQtyColumn;
 }
 
+async function loadLocalExcelFile(file){
+  if (!file) return;
+  const ext = (file.name || '').split('.').pop().toLowerCase();
+  if (!['xlsx','xls','csv'].includes(ext)) {
+    throw new Error('File non valido. Usa .xlsx, .xls oppure .csv');
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+  const firstSheetName = workbook.SheetNames[0];
+  const ws = workbook.Sheets[firstSheetName];
+  const rowsRaw = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1, defval: '' });
+  const rows = rowsRaw.filter(row => Array.isArray(row) && row.some(cell => String(cell ?? '').trim() !== ''));
+  if (!rows.length) {
+    throw new Error('Il file caricato è vuoto.');
+  }
+
+  const headers = rows[0].map((h, idx) => String(h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
+  const dataRows = rows.slice(1).map(values => {
+    const obj = {};
+    headers.forEach((header, index) => { obj[header] = values[index] !== undefined ? String(values[index]) : ''; });
+    return obj;
+  });
+
+  settings.sourceType = 'local';
+  settings.spreadsheetId = '';
+  settings.localSheetData = { headers, rows: dataRows, fileName: file.name };
+  saveSettings();
+  loadMeta();
+  showMsg('File locale caricato: ' + file.name);
+  speak('File locale caricato');
+  showView('viewScanner');
+}
+
+$('loadLocalFileBtn').onclick = async () => {
+  const file = $('sLocalFile').files[0];
+  if (!file) {
+    showMsg('Seleziona un file .xlsx, .xls o .csv', true);
+    return;
+  }
+  try {
+    await loadLocalExcelFile(file);
+  } catch (e) {
+    showMsg(e.message || 'Errore nel caricamento del file locale', true);
+    speak('Errore caricamento file');
+  }
+};
+
 $('saveSettingsBtn').onclick=()=>{
   const raw = $('sSheet').value.trim();
   settings.spreadsheetId = normalizeSpreadsheetId(raw);
@@ -865,6 +993,9 @@ $('saveSettingsBtn').onclick=()=>{
     settings.photoColumn = $('sPhotoCol').value.trim().toUpperCase() || 'P';
     settings.activeQtyColumn = $('sQtyCol').value.trim().toUpperCase() || 'K';
   }
+  if (!settings.spreadsheetId) {
+    settings.sourceType = settings.localSheetData ? 'local' : 'sheet';
+  }
   saveSettings();
   showMsg('Impostazioni salvate');
   loadMeta();
@@ -873,8 +1004,8 @@ $('saveSettingsBtn').onclick=()=>{
 
 $('saveProductBtn').onclick=async ()=>{
   if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
-  if(!settings.spreadsheetId && !settings.scriptUrl){
-    showMsg('Inserisci prima ID del foglio Google nelle impostazioni.',true); return;
+  if(!settings.spreadsheetId && !settings.scriptUrl && !settings.localSheetData){
+    showMsg('Inserisci prima ID del foglio Google, il link Drive o carica un file locale.',true); return;
   }
   if(!settings.scriptUrl && settings.spreadsheetId){
     showMsg('La lettura è diretta dal foglio Google. La scrittura richiede OAuth o un backend Apps Script.',true);
@@ -919,8 +1050,8 @@ fillSettingsForm();
 applyRole();
 renderColIndicator();
 loadMeta();
-if(!settings.spreadsheetId && role==='GESTORE') showView('viewSettings');
-if(!settings.spreadsheetId && role!=='GESTORE') showView('viewScanner');
+if(!settings.spreadsheetId && !settings.localSheetData && role==='GESTORE') showView('viewSettings');
+if(!settings.spreadsheetId && !settings.localSheetData && role!=='GESTORE') showView('viewScanner');
 </script>
 </body>
 </html>
