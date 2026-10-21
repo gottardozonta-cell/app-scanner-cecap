@@ -41,6 +41,9 @@
   .hidden { display:none !important; }
   .colitem { display:flex; align-items:center; padding:10px; font-size:18px; background:#fff; border-radius:8px; margin-top:6px; }
   .colitem.sel { outline:4px solid #00695C; font-weight:bold; }
+  .queue-list { width:100%; display:flex; flex-direction:column; gap:4px; }
+  .queue-item { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:8px; background:#fff; }
+  .queue-item.current { background:#dff7e8; border:2px solid #00695C; }
   dialog { border:none; border-radius:12px; padding:20px; width:90%; max-width:400px; }
   dialog::backdrop { background:rgba(0,0,0,0.5); }
 </style>
@@ -67,6 +70,12 @@
       <div id="pLabel" style="font-size:18px; font-weight:bold;"></div>
     </div>
   </div>
+  <div id="productQueueList" class="card pending hidden" style="display:flex; flex-direction:column; align-items:stretch;">
+    <div style="font-size:18px; font-weight:bold; margin-bottom:6px;">Prodotti da lavorare</div>
+    <div id="queueContent" class="queue-list"></div>
+  </div>
+  <button class="big btn-primary hidden" id="startColumnBtn">AVVIA COLONNA</button>
+  <button class="big btn-orange hidden" id="nextAutoBtn">PROSSIMO PRODOTTO</button>
   <button class="big btn-orange" id="undoBtn">&#8617; INDIETRO (annulla ultima scansione)</button>
   <button class="big btn-red hidden" id="resetColBtn">RICOMINCIA COLONNA DA ZERO</button>
   <button class="big btn-dark hidden" id="resetAllBtn">AZZERA TUTTI I CONTEGGI</button>
@@ -127,6 +136,9 @@ let currentProduct = null;
 let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
+let autoQueue = [];
+let autoIndex = 0;
+let autoMode = false;
 
 function normalizeSpreadsheetId(value){
   if(!value) return '';
@@ -478,6 +490,33 @@ async function directSheetFetch(params){
         return { ok:true, product };
       }
 
+      if (params.action === 'listProductsForColumn') {
+        const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+        const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+        const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+        const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+        const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+
+        const products = [];
+        rows.forEach(row => {
+          const values = headers.map(h => row[h] ?? '');
+          const barcode = String(values[barcodeIndex] ?? '').trim();
+          const qtyRaw = String(values[qtyIndex] ?? '').trim();
+          const qty = Number(qtyRaw.replace(',', '.')) || 0;
+          if (!barcode || qty <= 0) return;
+          products.push({
+            barcode,
+            name: String(values[nameIndex] ?? ''),
+            description: String(values[descIndex] ?? ''),
+            photoUrl: String(values[photoIndex] ?? ''),
+            quantity: qty,
+            qtyColumn: params.qtyColumn
+          });
+        });
+
+        return { ok:true, products };
+      }
+
       return { ok:false, error:'Azione non supportata.' };
     } catch (err) {
       lastError = err;
@@ -555,12 +594,117 @@ function onScan(code){
   handleBarcode(code);
 }
 
+function renderQueueList(){
+  const queueBox = $('productQueueList');
+  const content = $('queueContent');
+  if (!autoQueue.length) {
+    queueBox.classList.add('hidden');
+    content.innerHTML = '';
+    return;
+  }
+  queueBox.classList.remove('hidden');
+  content.innerHTML = autoQueue.map((p, idx) => {
+    const isCurrent = idx === autoIndex;
+    const qty = Number(p.quantity) || 0;
+    return `
+      <div class="queue-item ${isCurrent ? 'current' : ''}">
+        <span>${idx + 1}. ${p.name || 'Prodotto'}</span>
+        <strong>${qty}</strong>
+      </div>
+    `;
+  }).join('');
+}
+
+function finishAutoSequence(){
+  autoMode = false;
+  autoQueue = [];
+  autoIndex = 0;
+  currentProduct = null;
+  renderQueueList();
+  $('productCard').classList.add('hidden');
+  showMsg('FINE LAVORO');
+  speak('Fine lavoro');
+  beep(true);
+  vibrate(true);
+}
+
+function showNextAutoProduct(){
+  if (!autoQueue.length) {
+    finishAutoSequence();
+    return;
+  }
+  if (autoIndex >= autoQueue.length) {
+    finishAutoSequence();
+    return;
+  }
+
+  const product = autoQueue[autoIndex];
+  currentProduct = product;
+  renderProduct(product, product.quantity);
+  renderQueueList();
+  showMsg(`Prodotto ${autoIndex + 1} di ${autoQueue.length}: ${product.name || 'Prodotto'} - ${product.quantity} pezzi`);
+  speak(`Prodotto ${autoIndex + 1} di ${autoQueue.length} ${product.name || 'Prodotto'} con ${product.quantity} pezzi`);
+}
+
+async function startColumnSequence(){
+  if (!settings.spreadsheetId) {
+    showMsg('Inserisci prima il foglio Google nelle impostazioni.', true);
+    return;
+  }
+  if (role !== 'GESTORE') {
+    showMsg('Devi essere nel ruolo Gestore per avviare la colonna.', true);
+    return;
+  }
+
+  showMsg('Carico prodotti della colonna...');
+  try {
+    const res = await apiGet(Object.assign({ action: 'listProductsForColumn' }, commonParams()));
+    if (!res.ok) {
+      showMsg(res.error || 'Errore nella lettura del foglio', true);
+      return;
+    }
+
+    const items = (res.products || []).filter(p => Number(p.quantity) > 0 && (p.barcode || '').trim());
+    if (!items.length) {
+      autoQueue = [];
+      autoMode = false;
+      autoIndex = 0;
+      renderQueueList();
+      showMsg('Nessun prodotto con quantità valida in questa colonna.', true);
+      speak('Nessun prodotto nella colonna');
+      return;
+    }
+
+    autoQueue = items;
+    autoIndex = 0;
+    autoMode = true;
+    renderQueueList();
+    showNextAutoProduct();
+    showMsg('Colonna avviata. Inquadra il codice del prodotto corrente.', false);
+  } catch (e) {
+    autoQueue = [];
+    autoMode = false;
+    autoIndex = 0;
+    renderQueueList();
+    showMsg('Errore caricamento colonna: ' + e.message, true);
+    speak('Errore caricamento colonna');
+  }
+}
+
 function handleBarcode(code){
   showMsg('Ricerca: '+code+' ...');
   apiGet(Object.assign({action:'getProduct',barcode:code}, commonParams()))
     .then(res=>{
       if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
-      if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
+      if(!res.product){
+        if (autoMode && currentProduct && String(code).trim() !== String(currentProduct.barcode || '').trim()) {
+          showMsg('Codice sbagliato: serve ' + (currentProduct.name || currentProduct.barcode), true);
+          speak('Codice sbagliato');
+          beep(true);
+          return;
+        }
+        showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return;
+      }
       const p=res.product; currentProduct=p;
       if(p.quantity<=0){ renderProduct(p,0); showMsg('Nessun pezzo da preparare'); speak('Nessun pezzo da preparare'); return; }
       const key='count_'+p.barcode+'_'+p.qtyColumn;
@@ -570,6 +714,31 @@ function handleBarcode(code){
       localStorage.setItem(key,String(remaining));
       historyStack.push({key:key,before:before});
       renderProduct(p,remaining);
+
+      if (autoMode) {
+        if (remaining === 0) {
+          showMsg('RIGA COMPLETATA: ' + (p.name || 'Prodotto') + '. Passo al successivo.', false);
+          speak('Riga completata');
+          beep(true);
+          vibrate(true);
+          autoIndex += 1;
+          renderQueueList();
+          setTimeout(() => {
+            if (autoIndex >= autoQueue.length) {
+              finishAutoSequence();
+              return;
+            }
+            showNextAutoProduct();
+          }, 900);
+          return;
+        }
+        showMsg('Mancano '+remaining+' per '+(p.name || 'Prodotto'));
+        speak('Mancano '+remaining);
+        beep(false);
+        vibrate(false);
+        return;
+      }
+
       if(remaining===0){ beep(true); vibrate(true); speak('Fatto'); showMsg('COMPLETATO!'); }
       else { beep(false); vibrate(false); speak('Mancano '+remaining); showMsg('Mancano '+remaining); }
     })
@@ -586,7 +755,22 @@ function renderProduct(p,remaining){
   const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
   if(photoUrl){ $('pPhoto').src=photoUrl; $('pPhoto').style.display='block'; }
   else $('pPhoto').style.display='none';
+  $('productCard').classList.remove('hidden');
 }
+
+$('startColumnBtn').onclick=()=>startColumnSequence();
+$('nextAutoBtn').onclick=()=>{
+  if (!autoQueue.length) {
+    showMsg('Nessuna colonna in esecuzione.', true);
+    return;
+  }
+  autoIndex += 1;
+  if (autoIndex >= autoQueue.length) {
+    finishAutoSequence();
+    return;
+  }
+  showNextAutoProduct();
+};
 
 $('undoBtn').onclick=()=>{
   if(!historyStack.length){ showMsg('Niente da annullare'); speak('Niente da annullare'); return; }
@@ -618,6 +802,8 @@ function applyRole(){
   $('resetColBtn').classList.toggle('hidden',!isG);
   $('resetAllBtn').classList.toggle('hidden',!isG);
   $('gestoreSettings').classList.toggle('hidden',!isG);
+  $('startColumnBtn').classList.toggle('hidden',!isG);
+  $('nextAutoBtn').classList.toggle('hidden',!isG);
   if(!isG){ showView('viewScanner'); }
 }
 $('authBtn').onclick=()=>{
