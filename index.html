@@ -130,12 +130,31 @@ let scanner = null;
 
 function normalizeSpreadsheetId(value){
   if(!value) return '';
-  const str = String(value).trim();
-  if(!str) return '';
-  const match = str.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/i) || str.match(/key=([A-Za-z0-9_-]+)/i);
+  const raw = String(value).trim();
+  if(!raw) return '';
+
+  try {
+    const u = new URL(raw);
+    const host = (u.hostname || '').toLowerCase();
+    if (host.includes('docs.google.com') || host.includes('drive.google.com')) {
+      const path = u.pathname || '';
+      const matches = [
+        path.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]{10,})/i),
+        path.match(/\/d\/([A-Za-z0-9_-]{10,})/i)
+      ];
+      for (const match of matches) {
+        if (match && match[1]) return match[1];
+      }
+      const idFromQuery = u.searchParams.get('id');
+      if (idFromQuery && /^[A-Za-z0-9_-]{10,}$/.test(idFromQuery)) return idFromQuery;
+    }
+  } catch (e) {}
+
+  const match = raw.match(/(?:\/spreadsheets\/d\/|\/d\/|id=)([A-Za-z0-9_-]{10,})/i) ||
+    raw.match(/key=([A-Za-z0-9_-]+)/i) ||
+    raw.match(/^([A-Za-z0-9_-]{10,})$/i);
   if (match && match[1]) return match[1];
-  if (/^[A-Za-z0-9_-]{10,}$/.test(str)) return str;
-  return str;
+  return raw;
 }
 
 function loadSettings(){
@@ -143,7 +162,6 @@ function loadSettings(){
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
     if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
-    if (normalized.sheetName) delete normalized.sheetName;
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -188,11 +206,15 @@ function columnIndexFromLetter(letter){
 function googleSheetGvizUrl(sheetId, sheetName){
   const name = (sheetName || '').trim();
   const base = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
-  return name ? `${base}&sheet=${encodeURIComponent(name)}` : base;
+  return name ? `${base}&sheet=${encodeURIComponent(name)}` : `${base}&sheet=${encodeURIComponent('Foglio1')}`;
 }
 
 function googleSheetCsvUrl(sheetId){
   return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+}
+
+function googleSheetPubCsvUrl(sheetId){
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/pub?output=csv`;
 }
 
 function parseGoogleSheetResponse(text){
@@ -222,9 +244,9 @@ function parseGoogleSheetResponse(text){
 }
 
 function parseCsvRows(text){
-  const rows = []; 
-  let current = ''; 
-  let row = []; 
+  const rows = [];
+  let current = '';
+  let row = [];
   let inQuotes = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
@@ -334,7 +356,6 @@ function commonParams(){
   return {
     token: settings.token,
     spreadsheetId: settings.spreadsheetId,
-    sheetName: settings.sheetName || '',
     barcodeColumn: settings.barcodeColumn,
     nameColumn: settings.nameColumn,
     descColumn: settings.descColumn,
@@ -354,7 +375,7 @@ async function fetchGoogleSheetData(url, label){
     throw new Error(label + ' ha restituito un contenuto vuoto.');
   }
   if (/^<!doctype html|^<html|text\/html/i.test(trimmed) || trimmed.toLowerCase().includes('<html')) {
-    throw new Error('Il foglio non è pubblico oppure l’ID/nome del foglio è errato.');
+    throw new Error('Il foglio non è pubblico oppure l’ID del foglio è errato.');
   }
   return text;
 }
@@ -364,10 +385,12 @@ async function directSheetFetch(params){
     return { ok:false, error:'ID foglio Google mancante.' };
   }
 
-  const sheetName = (settings.sheetName || '').trim();
-  const urls = [];
-  if (sheetName) urls.push(googleSheetGvizUrl(settings.spreadsheetId, sheetName));
-  urls.push(googleSheetCsvUrl(settings.spreadsheetId));
+  const sheetId = normalizeSpreadsheetId(settings.spreadsheetId);
+  const urls = [
+    googleSheetCsvUrl(sheetId),
+    googleSheetPubCsvUrl(sheetId),
+    googleSheetGvizUrl(sheetId, 'Foglio1')
+  ];
 
   let lastError = null;
 
@@ -433,8 +456,7 @@ async function directSheetFetch(params){
     }
   }
 
-  const message = lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e permessi del foglio e assicurati che sia pubblico.';
-  return { ok:false, error: message };
+  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e permessi del foglio e assicurati che sia pubblico.' };
 }
 
 async function apiGet(params){
@@ -619,7 +641,6 @@ function fillSettingsForm(){
 
 $('saveSettingsBtn').onclick=()=>{
   settings.spreadsheetId = normalizeSpreadsheetId($('sSheet').value.trim());
-  delete settings.sheetName;
   if(role==='GESTORE'){
     settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
     settings.nameColumn = $('sNameCol').value.trim().toUpperCase() || 'C';
