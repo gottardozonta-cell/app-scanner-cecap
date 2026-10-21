@@ -139,6 +139,18 @@ let scanner = null;
 function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
+function isAppsScriptUrl(url){
+  if(!url) return false;
+  try {
+    const u = new URL(url);
+    const path = (u.pathname || '').toLowerCase();
+    const host = (u.hostname || '').toLowerCase();
+    return host.includes('script.google.com') && /(?:\/exec|\/dev)(?:[?#]|$)/.test(path);
+  } catch (e) {
+    return false;
+  }
+}
+
 function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
 function beep(long){ try{
   const ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -199,6 +211,13 @@ function commonParams(){ return { token:settings.token, spreadsheetId:settings.s
   photoColumn:settings.photoColumn, qtyColumn:settings.activeQtyColumn }; }
 
 function apiGet(params){
+  if(!settings.scriptUrl){
+    throw new Error('URL Apps Script mancante. Apri Impostazioni e inserisci il link del Web App che termina con /exec.');
+  }
+  if(!isAppsScriptUrl(settings.scriptUrl)){
+    throw new Error('URL Apps Script non valido. Usa il link del deploy del Web App che finisce con /exec e non la pagina HTML di Google.');
+  }
+
   const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
   const sep = settings.scriptUrl.includes('?') ? '&' : '?';
   const url = settings.scriptUrl + sep + q;
@@ -206,6 +225,16 @@ function apiGet(params){
   return fetch(url).then(async r => {
     const text = await r.text();
     if(!text) return { ok:false, error:'Nessuna risposta dal server.' };
+
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    const trimmed = text.trim();
+    const looksLikeHtml = trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.includes('window[\'ppConfig\']') || ct.includes('text/html');
+
+    if(looksLikeHtml){
+      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
+      throw new Error('Il link inserito non è l\'endpoint Apps Script JSON. Usa il link del Web App che finisce con /exec e verifica che il deploy sia impostato su "Chiunque con il link". Dettaglio: ' + preview);
+    }
+
     try {
       return JSON.parse(text);
     } catch (e) {
@@ -217,6 +246,10 @@ function apiGet(params){
 
 function loadMeta(){
   if(!settings.scriptUrl){ showMsg('Vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
+  if(!isAppsScriptUrl(settings.scriptUrl)){
+    showMsg('URL Apps Script non valido. Inserisci il link del Web App che termina con /exec.',true);
+    return;
+  }
   apiGet(Object.assign({action:'meta'}, commonParams()))
     .then(res=>{ if(res.ok){ columnsMeta=res.columns||[]; renderColIndicator(); renderColList(); } else showMsg(res.error,true); })
     .catch(e=>showMsg('Errore collegamento: '+e.message,true));
