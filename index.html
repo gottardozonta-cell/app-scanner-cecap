@@ -88,15 +88,9 @@
 
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
-  <div id="driveSettings">
-    <label>Link Google Drive</label>
-    <input id="sDriveLink" placeholder="https://drive.google.com/drive/folders/...">
-  </div>
+  <label>ID foglio Google</label><input id="sSheet">
+  <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
   <div id="gestoreSettings" class="hidden">
-    <label>URL Apps Script (quello che finisce con /exec)</label><input id="sUrl">
-    <label>Token segreto (la password dello script)</label><input id="sToken">
-    <label>ID foglio Google</label><input id="sSheet">
-    <label>Nome foglio (opzionale, es. Foglio1)</label><input id="sTab">
     <label>Colonna codice a barre</label><input id="sBarcodeCol">
     <label>Colonna nome prodotto</label><input id="sNameCol">
     <label>Colonna descrizione</label><input id="sDescCol">
@@ -125,7 +119,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'', driveLink:'',
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
   barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
@@ -136,19 +130,89 @@ let historyStack = [];
 let lastScan = { code:null, time:0 };
 let scanner = null;
 
-function loadSettings(){ try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }catch(e){ return Object.assign({}, DEFAULTS); } }
+function loadSettings(){
+  try{ return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings')||'{}')); }
+  catch(e){ return Object.assign({}, DEFAULTS); }
+}
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
 function isAppsScriptUrl(url){
   if(!url) return false;
   try {
     const u = new URL(url);
-    const path = (u.pathname || '').toLowerCase();
     const host = (u.hostname || '').toLowerCase();
+    const path = (u.pathname || '').toLowerCase();
     return host.includes('script.google.com') && /(?:\/exec|\/dev)(?:[?#]|$)/.test(path);
   } catch (e) {
     return false;
   }
+}
+
+function columnLetterFromIndex(index) {
+  let n = index + 1;
+  let letters = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+function columnIndexFromLetter(letter){
+  const name = (letter || '').toUpperCase().replace(/[^A-Z]/g,'');
+  if(!name) return -1;
+  let value = 0;
+  for (let i = 0; i < name.length; i++) {
+    value = value * 26 + (name.charCodeAt(i) - 64);
+  }
+  return value - 1;
+}
+
+function googleSheetGvizUrl(sheetId, sheetName){
+  const name = (sheetName || 'Foglio1').trim() || 'Foglio1';
+  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+}
+
+function parseGoogleSheetResponse(text){
+  const normalized = (text || '').trim();
+  if (!normalized) return { headers: [], rows: [] };
+  const cleaned = normalized
+    .replace(/^google\.visualization\.Query\.setResponse\(/, '')
+    .replace(/\);?\s*$/, '');
+  const payload = JSON.parse(cleaned);
+  const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
+  const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
+  const headers = cols.map(c => (c && (c.label || c.id)) || '');
+  const data = rows.map(r => {
+    const values = r && r.c ? r.c : [];
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
+    });
+    return row;
+  });
+  return { headers, rows: data };
+}
+
+function buildColumnsMeta(headers){
+  const palette = ['#4CAF50','#FF9800','#2196F3','#9C27B0','#E91E63','#00BCD4','#795548','#607D8B'];
+  return headers.map((header, index) => ({
+    letter: columnLetterFromIndex(index),
+    header: header || ('Colonna ' + columnLetterFromIndex(index)),
+    color: palette[index % palette.length]
+  }));
+}
+
+function getHeaderIndexByColumnSpec(columnSpec, headers){
+  if (!columnSpec) return -1;
+  const text = String(columnSpec).trim();
+  if (!text) return -1;
+  const idx = columnIndexFromLetter(text);
+  if (idx >= 0) return idx;
+  const normalized = text.toLowerCase();
+  const match = headers.findIndex(h => String(h || '').trim().toLowerCase() === normalized);
+  return match;
 }
 
 function speak(t){ try{ const u=new SpeechSynthesisUtterance(t); u.lang='it-IT'; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){} }
@@ -205,57 +269,123 @@ async function readPhotoSource(){
   return null;
 }
 
-/* --- CHIAMATE AL GOOGLE APPS SCRIPT --- */
-function commonParams(){ return { token:settings.token, spreadsheetId:settings.spreadsheetId, sheetName:settings.sheetName,
-  barcodeColumn:settings.barcodeColumn, nameColumn:settings.nameColumn, descColumn:settings.descColumn,
-  photoColumn:settings.photoColumn, qtyColumn:settings.activeQtyColumn }; }
+function commonParams(){
+  return {
+    token: settings.token,
+    spreadsheetId: settings.spreadsheetId,
+    sheetName: settings.sheetName,
+    barcodeColumn: settings.barcodeColumn,
+    nameColumn: settings.nameColumn,
+    descColumn: settings.descColumn,
+    photoColumn: settings.photoColumn,
+    qtyColumn: settings.activeQtyColumn
+  };
+}
 
-function apiGet(params){
-  if(!settings.scriptUrl){
-    throw new Error('URL Apps Script mancante. Apri Impostazioni e inserisci il link del Web App che termina con /exec.');
+async function directSheetFetch(params){
+  if(!settings.spreadsheetId){
+    return { ok:false, error:'ID foglio Google mancante.' };
   }
-  if(!isAppsScriptUrl(settings.scriptUrl)){
-    throw new Error('URL Apps Script non valido. Usa il link del deploy del Web App che finisce con /exec e non la pagina HTML di Google.');
+
+  const sheetName = settings.sheetName || 'Foglio1';
+  const url = googleSheetGvizUrl(settings.spreadsheetId, sheetName);
+  const res = await fetch(url, { cache: 'no-store' });
+  const text = await res.text();
+  if(!res.ok || !text) {
+    return { ok:false, error:'Impossibile leggere il foglio Google.' };
   }
 
-  const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
-  const sep = settings.scriptUrl.includes('?') ? '&' : '?';
-  const url = settings.scriptUrl + sep + q;
+  try {
+    const parsed = parseGoogleSheetResponse(text);
+    const headers = parsed.headers.length ? parsed.headers : Array.from({length: 26}, (_, i) => columnLetterFromIndex(i));
+    const rows = parsed.rows || [];
 
-  return fetch(url).then(async r => {
+    if(params.action === 'meta') {
+      return { ok:true, columns: buildColumnsMeta(headers) };
+    }
+
+    if(params.action === 'getProduct') {
+      const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+      const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+      const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+      const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+      const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+      const targetCode = String(params.barcode || '').trim();
+
+      const productRow = rows.find(row => {
+        const collected = Object.keys(row).length ? Object.values(row) : [];
+        const codeValue = barcodeIndex >= 0 && barcodeIndex < collected.length ? String(collected[barcodeIndex] || '').trim() : '';
+        return codeValue === targetCode;
+      });
+
+      if(!productRow) {
+        return { ok:true, product:null };
+      }
+
+      const values = headers.map(h => productRow[h] ?? '');
+      const product = {
+        barcode: String(values[barcodeIndex] ?? ''),
+        name: String(values[nameIndex] ?? ''),
+        description: String(values[descIndex] ?? ''),
+        photoUrl: String(values[photoIndex] ?? ''),
+        quantity: Number(values[qtyIndex] || 0),
+        qtyColumn: params.qtyColumn
+      };
+      return { ok:true, product };
+    }
+
+    return { ok:false, error:'Azione non supportata per Google Sheet diretto.' };
+  } catch (e) {
+    return { ok:false, error:'Impossibile leggere il foglio Google. Verifica ID e nome del foglio.' };
+  }
+}
+
+async function apiGet(params){
+  if (settings.scriptUrl && isAppsScriptUrl(settings.scriptUrl)) {
+    const q = Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
+    const sep = settings.scriptUrl.includes('?') ? '&' : '?';
+    const url = settings.scriptUrl + sep + q;
+    const r = await fetch(url);
     const text = await r.text();
     if(!text) return { ok:false, error:'Nessuna risposta dal server.' };
-
     const ct = (r.headers.get('content-type') || '').toLowerCase();
     const trimmed = text.trim();
-    const looksLikeHtml = trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.includes('window[\'ppConfig\']') || ct.includes('text/html');
-
+    const looksLikeHtml = trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || ct.includes('text/html');
     if(looksLikeHtml){
-      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
-      throw new Error('Il link inserito non è l\'endpoint Apps Script JSON. Usa il link del Web App che finisce con /exec e verifica che il deploy sia impostato su "Chiunque con il link". Dettaglio: ' + preview);
+      throw new Error('Il link inserito non è un endpoint JSON di Apps Script: usa un Web App con /exec oppure lascia vuoto il campo e usa direttamente il foglio Google.');
     }
+    try { return JSON.parse(text); }
+    catch(e) {
+      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
+      throw new Error('Risposta non JSON dal backend. Dettaglio: ' + preview);
+    }
+  }
 
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      const preview = text.replace(/\s+/g, ' ').slice(0, 220);
-      throw new Error('Risposta non JSON dal backend. Controlla URL Apps Script, token e accessi. Dettaglio: ' + preview);
-    }
-  });
+  if (settings.spreadsheetId) {
+    return await directSheetFetch(params);
+  }
+
+  throw new Error('URL Apps Script mancante oppure ID foglio Google mancante.');
 }
 
 function loadMeta(){
-  if(!settings.scriptUrl){ showMsg('Vai in IMPOSTAZIONI e inserisci i dati di collegamento.'); return; }
-  if(!isAppsScriptUrl(settings.scriptUrl)){
-    showMsg('URL Apps Script non valido. Inserisci il link del Web App che termina con /exec.',true);
+  if(!settings.spreadsheetId && !settings.scriptUrl){
+    showMsg('Vai in IMPOSTAZIONI e inserisci ID del foglio Google.');
     return;
   }
   apiGet(Object.assign({action:'meta'}, commonParams()))
-    .then(res=>{ if(res.ok){ columnsMeta=res.columns||[]; renderColIndicator(); renderColList(); } else showMsg(res.error,true); })
+    .then(res=>{
+      if(res.ok){
+        columnsMeta = res.columns || [];
+        renderColIndicator();
+        renderColList();
+      } else {
+        showMsg(res.error || 'Errore nel caricamento del foglio', true);
+      }
+    })
     .catch(e=>showMsg('Errore collegamento: '+e.message,true));
 }
 
-/* --- SCANNER --- */
 function startScanner(){
   if(scanner) return;
   if(typeof Html5Qrcode==='undefined'){ showMsg('Libreria scanner non caricata: serve connessione internet.',true); return; }
@@ -279,7 +409,7 @@ function onScan(code){
 
 function handleBarcode(code){
   showMsg('Ricerca: '+code+' ...');
-  apiGet(Object.assign({action:'getProduct',barcode:code},commonParams()))
+  apiGet(Object.assign({action:'getProduct',barcode:code}, commonParams()))
     .then(res=>{
       if(!res.ok){ showMsg(res.error,true); speak('Errore'); return; }
       if(!res.product){ showMsg('Prodotto non presente nel foglio',true); speak('Prodotto non presente'); beep(true); return; }
@@ -310,7 +440,6 @@ function renderProduct(p,remaining){
   else $('pPhoto').style.display='none';
 }
 
-/* --- PULSANTI --- */
 $('undoBtn').onclick=()=>{
   if(!historyStack.length){ showMsg('Niente da annullare'); speak('Niente da annullare'); return; }
   const last=historyStack.pop();
@@ -332,7 +461,6 @@ $('resetAllBtn').onclick=()=>{
   showMsg('Tutti i conteggi azzerati'); speak('Tutti i conteggi azzerati');
 };
 
-/* --- RUOLI --- */
 function applyRole(){
   const isG = role==='GESTORE';
   $('roleTitle').textContent = isG?'Gestore':'Magazziniere';
@@ -341,11 +469,8 @@ function applyRole(){
   $('bottomNav').classList.toggle('hidden',!isG);
   $('resetColBtn').classList.toggle('hidden',!isG);
   $('resetAllBtn').classList.toggle('hidden',!isG);
-  $('driveSettings').classList.toggle('hidden',!isG);
-  $('gestoreSettings').classList.toggle('hidden',true);
-  if(!isG){
-    showView('viewScanner');
-  }
+  $('gestoreSettings').classList.toggle('hidden',!isG);
+  if(!isG){ showView('viewScanner'); }
 }
 $('authBtn').onclick=()=>{
   if(role==='GESTORE'){ role='MAGAZZINIERE'; localStorage.setItem('role',role); applyRole(); speak('Modalità magazziniere'); }
@@ -358,69 +483,76 @@ $('doLoginBtn').onclick=()=>{
 };
 $('cancelLoginBtn').onclick=()=>$('loginDialog').close();
 
-/* --- VISTE --- */
 function showView(id){
-  if(id==='viewSettings' && role!=='GESTORE') {
-    id = 'viewScanner';
-  }
-  ['viewScanner','viewGestore','viewSettings'].forEach(v=>$(v).classList.toggle('hidden',v!==id));
-  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===id));
+  if(id==='viewSettings' && role!=='GESTORE') id = 'viewScanner';
+  ['viewScanner','viewGestore','viewSettings'].forEach(v => $(v).classList.toggle('hidden', v !== id));
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === id));
   if(id==='viewScanner') startScanner(); else stopScanner();
 }
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
 $('settingsBtn').onclick=()=>showView('viewSettings');
 $('backToScannerBtn').onclick=()=>showView('viewScanner');
 
-/* --- COLONNE --- */
 function renderColIndicator(){
-  const col=columnsMeta.find(c=>c.letter===settings.activeQtyColumn);
-  $('colIndicator').innerHTML='COLONNA: '+settings.activeQtyColumn+
-    (col? ' <span class="swatch" style="background:'+col.color+'"></span> '+col.header : '');
+  const col = columnsMeta.find(c => c.letter === settings.activeQtyColumn);
+  $('colIndicator').innerHTML = 'COLONNA: ' + settings.activeQtyColumn +
+    (col ? ' <span class="swatch" style="background:' + col.color + '"></span> ' + col.header : '');
 }
+
 function renderColList(){
-  const c=$('colList'); c.innerHTML='';
+  const c = $('colList'); c.innerHTML='';
   if(!columnsMeta.length){ c.innerHTML='<p>Nessuna colonna caricata. Controlla le impostazioni.</p>'; return; }
   columnsMeta.forEach(col=>{
     const div=document.createElement('div');
     div.className='colitem'+(col.letter===settings.activeQtyColumn?' sel':'');
     div.innerHTML='<span class="swatch" style="background:'+col.color+'"></span><b>'+col.letter+'</b>&nbsp;-&nbsp;'+(col.header||'(senza nome)');
-    div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList();
-      showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
+    div.onclick=()=>{ settings.activeQtyColumn=col.letter; saveSettings(); renderColIndicator(); renderColList(); showMsg('Colonna attiva: '+col.letter); speak('Colonna '+col.letter+' attiva'); };
     c.appendChild(div);
   });
 }
 
-/* --- IMPOSTAZIONI --- */
 function fillSettingsForm(){
-  $('sUrl').value=settings.scriptUrl; $('sToken').value=settings.token;
-  $('sSheet').value=settings.spreadsheetId; $('sTab').value=settings.sheetName;
-  $('sBarcodeCol').value=settings.barcodeColumn; $('sNameCol').value=settings.nameColumn;
-  $('sDescCol').value=settings.descColumn; $('sPhotoCol').value=settings.photoColumn;
-  $('sQtyCol').value=settings.activeQtyColumn;
-  $('sDriveLink').value=settings.driveLink || '';
+  $('sSheet').value = settings.spreadsheetId;
+  $('sTab').value = settings.sheetName;
+  $('sBarcodeCol').value = settings.barcodeColumn;
+  $('sNameCol').value = settings.nameColumn;
+  $('sDescCol').value = settings.descColumn;
+  $('sPhotoCol').value = settings.photoColumn;
+  $('sQtyCol').value = settings.activeQtyColumn;
 }
+
 $('saveSettingsBtn').onclick=()=>{
-  settings.driveLink=$('sDriveLink').value.trim();
-  settings.scriptUrl=$('sUrl').value.trim();
-  settings.token=$('sToken').value.trim();
-  settings.spreadsheetId=$('sSheet').value.trim();
-  settings.sheetName=$('sTab').value.trim();
+  settings.spreadsheetId = $('sSheet').value.trim();
+  settings.sheetName = $('sTab').value.trim() || 'Foglio1';
   if(role==='GESTORE'){
-    settings.barcodeColumn=$('sBarcodeCol').value.trim().toUpperCase()||'E';
-    settings.nameColumn=$('sNameCol').value.trim().toUpperCase()||'C';
-    settings.descColumn=$('sDescCol').value.trim().toUpperCase()||'F';
-    settings.photoColumn=$('sPhotoCol').value.trim().toUpperCase()||'P';
-    settings.activeQtyColumn=$('sQtyCol').value.trim().toUpperCase()||'K';
+    settings.barcodeColumn = $('sBarcodeCol').value.trim().toUpperCase() || 'E';
+    settings.nameColumn = $('sNameCol').value.trim().toUpperCase() || 'C';
+    settings.descColumn = $('sDescCol').value.trim().toUpperCase() || 'F';
+    settings.photoColumn = $('sPhotoCol').value.trim().toUpperCase() || 'P';
+    settings.activeQtyColumn = $('sQtyCol').value.trim().toUpperCase() || 'K';
   }
-  saveSettings(); showMsg('Impostazioni salvate'); loadMeta(); showView('viewScanner');
+  saveSettings();
+  showMsg('Impostazioni salvate');
+  loadMeta();
+  showView('viewScanner');
 };
 
-/* --- SALVATAGGIO PRODOTTO (GESTORE) --- */
 $('saveProductBtn').onclick=async ()=>{
   if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
-  const payload=Object.assign({action:'updateProduct'},commonParams(),{
-    barcode:$('fBarcode').value.trim(), name:$('fName').value, description:$('fDesc').value,
-    quantity:parseInt($('fQty').value)||0 });
+  if(!settings.spreadsheetId && !settings.scriptUrl){
+    showMsg('Inserisci prima ID del foglio Google nelle impostazioni.',true); return;
+  }
+  if(!settings.scriptUrl && settings.spreadsheetId){
+    showMsg('La scrittura diretta su Google Sheet richiede OAuth o Apps Script. In questa versione la lettura è diretta, la scrittura resta su backend.',true);
+    return;
+  }
+
+  const payload = Object.assign({action:'updateProduct'}, commonParams(), {
+    barcode: $('fBarcode').value.trim(),
+    name: $('fName').value,
+    description: $('fDesc').value,
+    quantity: parseInt($('fQty').value) || 0
+  });
 
   try {
     const photo = await readPhotoSource();
@@ -436,15 +568,14 @@ $('saveProductBtn').onclick=async ()=>{
 
   showMsg('Salvataggio in corso...');
   try{
-    const res=await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
-    const txt=await res.text();
-    let ok=false; try{ ok=JSON.parse(txt).ok; }catch(e){ ok=res.ok; }
-    showMsg(ok?'Articolo salvato nel foglio ✔':'Errore nel salvataggio: '+txt,!ok);
+    const res = await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
+    const txt = await res.text();
+    let ok = false; try { ok = JSON.parse(txt).ok; } catch (e) { ok = res.ok; }
+    showMsg(ok ? 'Articolo salvato nel foglio ✔' : 'Errore nel salvataggio: '+txt, !ok);
     if(ok) speak('Articolo salvato');
-  }catch(e){ showMsg('Errore: '+e.message,true); }
+  } catch (e) { showMsg('Errore: '+e.message,true); }
 };
 
-/* --- AVVIO --- */
 document.body.addEventListener('touchend',function once(){
   try{ new (window.AudioContext||window.webkitAudioContext)().resume(); }catch(e){}
   if('wakeLock' in navigator){ navigator.wakeLock.request('screen').catch(()=>{}); }
@@ -454,8 +585,8 @@ fillSettingsForm();
 applyRole();
 renderColIndicator();
 loadMeta();
-if(!settings.scriptUrl && role==='GESTORE') showView('viewSettings');
-if(!settings.scriptUrl && role!=='GESTORE') showView('viewScanner');
+if(!settings.spreadsheetId && role==='GESTORE') showView('viewSettings');
+if(!settings.spreadsheetId && role!=='GESTORE') showView('viewScanner');
 </script>
 </body>
 </html>
