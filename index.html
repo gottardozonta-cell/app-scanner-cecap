@@ -117,10 +117,12 @@
       <label>Colonna foto (URL)</label><input id="sPhotoCol">
       <label>Colonna quantità attiva (K, L, M, N, O, P, Q...)</label><input id="sQtyCol">
     </div>
+    <button class="big btn-primary" id="diagBtn">MOSTRA DIAGNOSTICA COLONNE</button>
+    <pre id="diagOut" style="white-space:pre-wrap; font-size:14px; background:#fff; padding:10px; border-radius:8px; max-height:300px; overflow:auto;"></pre>
     <button class="big btn-primary" id="startSelectedColumnBtn">AVVIA COLONNA</button>
     <button class="big btn-primary" id="saveSettingsBtn">SALVA E RICARICA</button>
     <button class="big btn-primary" id="backToScannerBtn">TORNA ALLO SCANNER</button>
-    <div style="text-align:center; opacity:.55; margin-top:24px; font-size:14px;">Magazzino Facile v2.2</div>
+    <div style="text-align:center; opacity:.55; margin-top:24px; font-size:14px;">Magazzino Facile v2.3</div>
   </div>
 
   <nav id="bottomNav" class="hidden">
@@ -252,8 +254,16 @@
     function saveSettings() {
       try {
         localStorage.setItem('settings', JSON.stringify(settings));
+        return true;
       } catch (e) {
-        showMsg('Impossibile salvare le impostazioni (file locale troppo grande?): ' + e.message, true);
+        // Il file locale è troppo grande per la memoria del browser: salva le
+        // impostazioni SENZA i dati del file (restano in memoria finché la pagina è aperta)
+        try {
+          const lite = Object.assign({}, settings, { localSheetData: null });
+          localStorage.setItem('settings', JSON.stringify(lite));
+        } catch (e2) {}
+        showMsg('File troppo grande per la memoria del browser: funzionerà finché non chiudi o ricarichi la pagina.', true);
+        return false;
       }
     }
 
@@ -394,6 +404,28 @@
       const photoIndex = resolveColumnIndex(params.photoColumn, headers);
       const qtyIndex = resolveColumnIndex(params.qtyColumn, headers);
 
+      if (params.action === 'diag') {
+        const lines = [];
+        lines.push('Sorgente: ' + (settings.sourceType === 'local' ? 'FILE LOCALE' : 'FOGLIO GOOGLE/DRIVE'));
+        lines.push('Righe dati: ' + rows.length + ' | Colonne: ' + headers.length + ' (A..' + lastCol + ')');
+        headers.forEach((h, i) => {
+          let nonEmpty = 0;
+          let nums = 0;
+          rows.forEach(r => {
+            if (!isBlankCell(r[i])) nonEmpty++;
+            if (toNumber(r[i]) > 0) nums++;
+          });
+          if (nonEmpty > 0) lines.push('Col. ' + columnLetterFromIndex(i) + ' "' + h + '": celle piene=' + nonEmpty + ' | numeri>0=' + nums);
+        });
+        [['barcode', barcodeIndex], ['quantita', qtyIndex]].forEach(pair => {
+          if (pair[1] >= 0 && pair[1] < headers.length) {
+            const samples = rows.slice(0, 3).map(r => '"' + String(r[pair[1]] ?? '') + '"').join(', ');
+            lines.push('Campioni col. ' + pair[0] + ' (' + columnLetterFromIndex(pair[1]) + '): ' + samples);
+          }
+        });
+        return { ok: true, report: lines.join('\n') };
+      }
+
       if (barcodeIndex < 0) return { ok: false, error: 'Colonna codice a barre "' + params.barcodeColumn + '" non trovata.' };
       if (barcodeIndex >= headers.length) return { ok: false, error: 'La colonna codice a barre ' + params.barcodeColumn + ' non esiste nel foglio (ultima disponibile: ' + lastCol + ').' };
       if (qtyIndex < 0) return { ok: false, error: 'Colonna quantità "' + params.qtyColumn + '" non trovata nel foglio.' };
@@ -494,18 +526,27 @@
       }
     }
 
-    // Legge un foglio Excel ANCORANDOLO ad A1: anche se il file ha colonne o righe
-    // iniziali vuote, la colonna A resta l'indice 0 e la K l'indice 10
+    // Legge un foglio Excel cella per cella ANCORANDOLO ad A1: anche se il file ha
+    // colonne o righe iniziali vuote, A resta l'indice 0 e la K l'indice 10.
+    // Se una cella ha una formula senza valore salvato, usa il testo visualizzato (w).
     function matrixFromWorksheet(ws) {
       if (!ws || !ws['!ref']) return [];
       const ref = XLSX.utils.decode_range(ws['!ref']);
-      return XLSX.utils.sheet_to_json(ws, {
-        header: 1,
-        raw: true,
-        defval: '',
-        blankrows: true,
-        range: { s: { r: 0, c: 0 }, e: { r: ref.e.r, c: ref.e.c } }
-      });
+      const out = [];
+      for (let r = 0; r <= ref.e.r; r++) {
+        const row = [];
+        for (let c = 0; c <= ref.e.c; c++) {
+          const cellObj = ws[XLSX.utils.encode_cell({ r, c })];
+          let v = '';
+          if (cellObj) {
+            if (cellObj.v !== undefined && cellObj.v !== null) v = cellObj.v;
+            else if (cellObj.w !== undefined && cellObj.w !== null) v = cellObj.w;
+          }
+          row.push(v);
+        }
+        out.push(row);
+      }
+      return out;
     }
 
     async function fetchGoogleSheetData(url, label) {
@@ -1145,6 +1186,17 @@
     document.querySelectorAll('nav button').forEach(b => b.onclick = () => showView(b.dataset.view));
     $('settingsBtn').onclick = () => showView('viewSettings');
     $('backToScannerBtn').onclick = () => showView('viewScanner');
+
+    $('diagBtn').onclick = async () => {
+      const out = $('diagOut');
+      out.textContent = 'Lettura dati in corso...';
+      try {
+        const res = await apiGet(Object.assign({ action: 'diag' }, commonParams()));
+        out.textContent = res.ok ? res.report : ('ERRORE: ' + (res.error || 'sconosciuto'));
+      } catch (e) {
+        out.textContent = 'ERRORE: ' + e.message;
+      }
+    };
 
     $('saveSettingsBtn').onclick = async () => {
       const rawSheet = $('sSheet').value.trim();
