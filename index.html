@@ -55,7 +55,6 @@
 
 <div id="msg" class="msg"></div>
 
-<!-- SCANNER -->
 <div id="viewScanner" class="view">
   <div id="colIndicator" style="font-size:22px; font-weight:bold;"></div>
   <div id="camera"></div>
@@ -73,7 +72,6 @@
   <button class="big btn-dark hidden" id="resetAllBtn">AZZERA TUTTI I CONTEGGI</button>
 </div>
 
-<!-- GESTORE -->
 <div id="viewGestore" class="view hidden">
   <h2>Aggiungi / modifica prodotto</h2>
   <label>Codice a barre</label><input id="fBarcode">
@@ -88,7 +86,6 @@
   <div id="colList"></div>
 </div>
 
-<!-- IMPOSTAZIONI -->
 <div id="viewSettings" class="view hidden">
   <h2>Impostazioni</h2>
   <label>Link Google Drive del foglio dati</label><input id="sDrive" placeholder="https://docs.google.com/spreadsheets/d/...">
@@ -135,11 +132,8 @@ let queuedProducts = [];
 let totalLoadPieces = 0;
 
 function loadSettings(){
-  try {
-    return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings') || '{}'));
-  } catch (e) {
-    return Object.assign({}, DEFAULTS);
-  }
+  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('settings') || '{}')); }
+  catch (e) { return Object.assign({}, DEFAULTS); }
 }
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
@@ -335,6 +329,34 @@ function buildQueuedProducts(){
   return queuedProducts;
 }
 
+function findProductInDriveData(barcode){
+  if(!driveDataCache.length) return null;
+
+  const barcodeIndex = colToIndex(settings.barcodeColumn);
+  const nameIndex = colToIndex(settings.nameColumn);
+  const descIndex = colToIndex(settings.descColumn);
+  const photoIndex = colToIndex(settings.photoColumn);
+  const qtyIndex = colToIndex(settings.activeQtyColumn);
+
+  for(let i=1;i<driveDataCache.length;i++){
+    const row = driveDataCache[i];
+    const rowBarcode = (row[barcodeIndex] || '').trim();
+    if(String(rowBarcode).toLowerCase() !== String(barcode).trim().toLowerCase()) continue;
+
+    const quantity = normalizeQtyValue(row[qtyIndex]);
+    return {
+      barcode: rowBarcode,
+      name: row[nameIndex] || '',
+      description: row[descIndex] || '',
+      photoUrl: row[photoIndex] || '',
+      quantity: quantity,
+      qtyColumn: settings.activeQtyColumn
+    };
+  }
+
+  return null;
+}
+
 function blobToBase64(blob){
   return new Promise((resolve,reject)=>{
     const reader = new FileReader();
@@ -371,7 +393,8 @@ function loadMeta(){
     loadDriveSheetData()
       .then(rows => {
         columnsMeta = buildColumnsMetaFromRows(rows);
-        renderColIndicator(); renderColList();
+        renderColIndicator();
+        renderColList();
       })
       .catch(e => showMsg('Errore collegamento: ' + e.message, true));
     return;
@@ -470,34 +493,6 @@ function handleBarcode(code){
   }
 
   showMsg('Nessun collegamento configurato. Inserisci il link Google Drive.', true);
-}
-
-function findProductInDriveData(barcode){
-  if(!driveDataCache.length) return null;
-
-  const barcodeIndex = colToIndex(settings.barcodeColumn);
-  const nameIndex = colToIndex(settings.nameColumn);
-  const descIndex = colToIndex(settings.descColumn);
-  const photoIndex = colToIndex(settings.photoColumn);
-  const qtyIndex = colToIndex(settings.activeQtyColumn);
-
-  for(let i=1;i<driveDataCache.length;i++){
-    const row = driveDataCache[i];
-    const rowBarcode = (row[barcodeIndex] || '').trim();
-    if(String(rowBarcode).toLowerCase() !== String(barcode).trim().toLowerCase()) continue;
-
-    const quantity = normalizeQtyValue(row[qtyIndex]);
-    return {
-      barcode: rowBarcode,
-      name: row[nameIndex] || '',
-      description: row[descIndex] || '',
-      photoUrl: row[photoIndex] || '',
-      quantity: quantity,
-      qtyColumn: settings.activeQtyColumn
-    };
-  }
-
-  return null;
 }
 
 function renderProduct(p,remaining){
@@ -650,7 +645,6 @@ $('saveProductBtn').onclick=async ()=>{
     showMsg('Errore: '+e.message, true);
   }
 };
-
 
 document.body.addEventListener('touchend',function once(){
   try{ new (window.AudioContext||window.webkitAudioContext)().resume(); }catch(e){}
