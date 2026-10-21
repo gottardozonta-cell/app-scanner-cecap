@@ -81,6 +81,7 @@
   <label>Descrizione</label><input id="fDesc">
   <label>Quantità (nella colonna attiva)</label><input id="fQty" type="number" inputmode="numeric">
   <label>Foto prodotto (dalla galleria o fotocamera)</label><input id="fPhoto" type="file" accept="image/*">
+  <label>Foto da Google Drive (URL completo o ID file)</label><input id="fPhotoDrive" placeholder="https://drive.google.com/file/d/... oppure ID del file">
   <button class="big btn-primary" id="saveProductBtn">SALVA NEL FOGLIO</button>
   <h2>Scegli la colonna countdown</h2>
   <p>Tocca una colonna per attivarla (K, L, M, N, O...):</p>
@@ -148,6 +149,48 @@ function beep(long){ try{
 }catch(e){} }
 function vibrate(long){ if(navigator.vibrate) navigator.vibrate(long?[300,100,300]:150); }
 function showMsg(t,isErr){ const m=$('msg'); m.textContent=t||''; m.className='msg'+(isErr?' err':''); }
+
+function normalizeDriveFileUrl(raw){
+  if(!raw) return '';
+  const value = raw.trim();
+  if(!value) return '';
+  const googleId = value.match(/(?:\/d\/|id=)([A-Za-z0-9_-]{10,})/);
+  if(googleId && googleId[1]) return 'https://drive.google.com/uc?export=view&id=' + googleId[1];
+  if(/^https?:\/\//i.test(value)) return value;
+  if(/^[A-Za-z0-9_-]{10,}$/.test(value)) return 'https://drive.google.com/uc?export=view&id=' + value;
+  return value;
+}
+
+function blobToBase64(blob){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function readPhotoSource(){
+  const file = $('fPhoto').files[0];
+  const driveValue = $('fPhotoDrive').value.trim();
+
+  if(file){
+    if(file.size > 4 * 1024 * 1024){ throw new Error('Foto troppo grande (max 4 MB)'); }
+    const b64 = await blobToBase64(file);
+    return { photoBase64: b64.split(',')[1], photoMime: file.type || 'image/jpeg', photoName: file.name };
+  }
+
+  if(driveValue){
+    const url = normalizeDriveFileUrl(driveValue);
+    const response = await fetch(url, { mode: 'cors' });
+    if(!response.ok) throw new Error('Impossibile leggere il file da Google Drive.');
+    const blob = await response.blob();
+    const b64 = await blobToBase64(blob);
+    return { photoBase64: b64.split(',')[1], photoMime: blob.type || 'image/jpeg', photoName: 'drive-file' };
+  }
+
+  return null;
+}
 
 /* --- CHIAMATE AL GOOGLE APPS SCRIPT --- */
 function commonParams(){ return { token:settings.token, spreadsheetId:settings.spreadsheetId, sheetName:settings.sheetName,
@@ -217,7 +260,8 @@ function renderProduct(p,remaining){
   $('pDesc').textContent=p.description||'';
   $('pCount').textContent=done?'FATTO!':remaining;
   $('pLabel').textContent=done?'PRODOTTO FINITO':'PEZZI RIMANENTI';
-  if(p.photoUrl){ $('pPhoto').src=p.photoUrl; $('pPhoto').style.display='block'; }
+  const photoUrl = normalizeDriveFileUrl(p.photoUrl || '');
+  if(photoUrl){ $('pPhoto').src=photoUrl; $('pPhoto').style.display='block'; }
   else $('pPhoto').style.display='none';
 }
 
@@ -318,18 +362,24 @@ $('saveSettingsBtn').onclick=()=>{
 };
 
 /* --- SALVATAGGIO PRODOTTO (GESTORE) --- */
-function fileToBase64(f){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); }); }
 $('saveProductBtn').onclick=async ()=>{
   if(!$('fBarcode').value.trim()){ showMsg('Inserisci il codice a barre',true); return; }
   const payload=Object.assign({action:'updateProduct'},commonParams(),{
     barcode:$('fBarcode').value.trim(), name:$('fName').value, description:$('fDesc').value,
     quantity:parseInt($('fQty').value)||0 });
-  const file=$('fPhoto').files[0];
-  if(file){
-    if(file.size>4*1024*1024){ showMsg('Foto troppo grande (max 4 MB)',true); return; }
-    const b64=await fileToBase64(file);
-    payload.photoBase64=b64.split(',')[1]; payload.photoMime=file.type; payload.photoName=file.name;
+
+  try {
+    const photo = await readPhotoSource();
+    if(photo){
+      payload.photoBase64 = photo.photoBase64;
+      payload.photoMime = photo.photoMime;
+      payload.photoName = photo.photoName;
+    }
+  } catch (e) {
+    showMsg(e.message || 'File non leggibile da Google Drive',true);
+    return;
   }
+
   showMsg('Salvataggio in corso...');
   try{
     const res=await fetch(settings.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)});
