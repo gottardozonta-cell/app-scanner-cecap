@@ -187,7 +187,11 @@ function columnIndexFromLetter(letter){
 
 function googleSheetGvizUrl(sheetId, sheetName){
   const name = (sheetName || 'Foglio1').trim() || 'Foglio1';
-  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+}
+
+function googleSheetCsvUrl(sheetId){
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
 }
 
 function parseGoogleSheetResponse(text){
@@ -209,6 +213,41 @@ function parseGoogleSheetResponse(text){
     return row;
   });
   return { headers, rows: data };
+}
+
+function parseCsvRows(text){
+  const rows = []; 
+  let current = ''; 
+  let row = []; 
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      row.push(current);
+      current = '';
+    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(current);
+      if (row.some(cell => cell !== '')) rows.push(row);
+      row = [];
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.length || row.length) {
+    row.push(current);
+    if (row.some(cell => cell !== '')) rows.push(row);
+  }
+  return rows;
 }
 
 function buildColumnsMeta(headers){
@@ -298,60 +337,98 @@ function commonParams(){
   };
 }
 
+async function fetchGoogleSheetData(url, label){
+  const res = await fetch(url, { cache: 'no-store' });
+  const text = await res.text();
+  if(!res.ok) {
+    throw new Error(label + ' non raggiungibile: ' + res.status + ' ' + res.statusText);
+  }
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    throw new Error(label + ' ha restituito un contenuto vuoto.');
+  }
+  if (/^<!doctype html|^<html|text\/html/i.test(trimmed) || trimmed.toLowerCase().includes('<html')) {
+    throw new Error('Il foglio non è pubblico oppure l’ID/nome del foglio è errato.');
+  }
+  return text;
+}
+
 async function directSheetFetch(params){
   if(!settings.spreadsheetId){
     return { ok:false, error:'ID foglio Google mancante.' };
   }
 
   const sheetName = settings.sheetName || 'Foglio1';
-  const url = googleSheetGvizUrl(settings.spreadsheetId, sheetName);
-  const res = await fetch(url, { cache: 'no-store' });
-  const text = await res.text();
-  if(!res.ok || !text) {
-    return { ok:false, error:'Impossibile leggere il foglio Google.' };
+  const urls = [
+    googleSheetGvizUrl(settings.spreadsheetId, sheetName),
+    googleSheetCsvUrl(settings.spreadsheetId)
+  ];
+
+  let lastError = null;
+
+  for (const url of urls) {
+    try {
+      const text = await fetchGoogleSheetData(url, 'Foglio Google');
+      let headers = [];
+      let rows = [];
+
+      if (url.includes('/gviz/')) {
+        const parsed = parseGoogleSheetResponse(text);
+        headers = parsed.headers;
+        rows = parsed.rows;
+      } else {
+        const csvRows = parseCsvRows(text);
+        if (!csvRows.length) throw new Error('Il foglio CSV è vuoto.');
+        headers = csvRows[0].map((h, idx) => (h || `Colonna ${columnLetterFromIndex(idx)}`).trim());
+        rows = csvRows.slice(1).map(values => {
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] !== undefined ? values[index].trim() : '';
+          });
+          return row;
+        });
+      }
+
+      if (params.action === 'meta') {
+        return { ok:true, columns: buildColumnsMeta(headers) };
+      }
+
+      if (params.action === 'getProduct') {
+        const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
+        const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
+        const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
+        const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
+        const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
+        const targetCode = String(params.barcode || '').trim();
+
+        const productRow = rows.find(row => {
+          const collected = Object.keys(row).length ? Object.values(row) : [];
+          const codeValue = barcodeIndex >= 0 && barcodeIndex < collected.length ? String(collected[barcodeIndex] || '').trim() : '';
+          return codeValue === targetCode;
+        });
+
+        if(!productRow) return { ok:true, product:null };
+
+        const values = headers.map(h => productRow[h] ?? '');
+        const product = {
+          barcode: String(values[barcodeIndex] ?? ''),
+          name: String(values[nameIndex] ?? ''),
+          description: String(values[descIndex] ?? ''),
+          photoUrl: String(values[photoIndex] ?? ''),
+          quantity: Number(values[qtyIndex] || 0),
+          qtyColumn: params.qtyColumn
+        };
+        return { ok:true, product };
+      }
+
+      return { ok:false, error:'Azione non supportata per Google Sheet diretto.' };
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
   }
 
-  try {
-    const parsed = parseGoogleSheetResponse(text);
-    const headers = parsed.headers.length ? parsed.headers : Array.from({length: 26}, (_, i) => columnLetterFromIndex(i));
-    const rows = parsed.rows || [];
-
-    if(params.action === 'meta') {
-      return { ok:true, columns: buildColumnsMeta(headers) };
-    }
-
-    if(params.action === 'getProduct') {
-      const barcodeIndex = getHeaderIndexByColumnSpec(params.barcodeColumn, headers);
-      const nameIndex = getHeaderIndexByColumnSpec(params.nameColumn, headers);
-      const descIndex = getHeaderIndexByColumnSpec(params.descColumn, headers);
-      const photoIndex = getHeaderIndexByColumnSpec(params.photoColumn, headers);
-      const qtyIndex = getHeaderIndexByColumnSpec(params.qtyColumn, headers);
-      const targetCode = String(params.barcode || '').trim();
-
-      const productRow = rows.find(row => {
-        const collected = Object.keys(row).length ? Object.values(row) : [];
-        const codeValue = barcodeIndex >= 0 && barcodeIndex < collected.length ? String(collected[barcodeIndex] || '').trim() : '';
-        return codeValue === targetCode;
-      });
-
-      if(!productRow) return { ok:true, product:null };
-
-      const values = headers.map(h => productRow[h] ?? '');
-      const product = {
-        barcode: String(values[barcodeIndex] ?? ''),
-        name: String(values[nameIndex] ?? ''),
-        description: String(values[descIndex] ?? ''),
-        photoUrl: String(values[photoIndex] ?? ''),
-        quantity: Number(values[qtyIndex] || 0),
-        qtyColumn: params.qtyColumn
-      };
-      return { ok:true, product };
-    }
-
-    return { ok:false, error:'Azione non supportata per Google Sheet diretto.' };
-  } catch (e) {
-    return { ok:false, error:'Impossibile leggere il foglio Google. Verifica ID e nome del foglio.' };
-  }
+  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e nome del foglio e assicurati che il foglio sia pubblico.' };
 }
 
 async function apiGet(params){
