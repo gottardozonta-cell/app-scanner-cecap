@@ -143,8 +143,7 @@ function loadSettings(){
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
     if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
-    if (normalized.sheetName) normalized.sheetName = String(normalized.sheetName).trim();
-    if (!normalized.sheetName) delete normalized.sheetName;
+    if (normalized.sheetName) delete normalized.sheetName;
     return normalized;
   } catch(e) {
     return Object.assign({}, DEFAULTS);
@@ -199,22 +198,27 @@ function googleSheetCsvUrl(sheetId){
 function parseGoogleSheetResponse(text){
   const normalized = (text || '').trim();
   if (!normalized) return { headers: [], rows: [] };
-  const cleaned = normalized
-    .replace(/^google\.visualization\.Query\.setResponse\(/, '')
-    .replace(/\);?\s*$/, '');
-  const payload = JSON.parse(cleaned);
-  const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
-  const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
-  const headers = cols.map(c => (c && (c.label || c.id)) || '');
-  const data = rows.map(r => {
-    const values = r && r.c ? r.c : [];
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
+
+  try {
+    const cleaned = normalized
+      .replace(/^google\.visualization\.Query\.setResponse\(/, '')
+      .replace(/\);?\s*$/, '');
+    const payload = JSON.parse(cleaned);
+    const cols = payload && payload.table && payload.table.cols ? payload.table.cols : [];
+    const rows = payload && payload.table && payload.table.rows ? payload.table.rows : [];
+    const headers = cols.map(c => (c && (c.label || c.id)) || '');
+    const data = rows.map(r => {
+      const values = r && r.c ? r.c : [];
+      const row = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index] && values[index].v !== undefined ? values[index].v : '';
+      });
+      return row;
     });
-    return row;
-  });
-  return { headers, rows: data };
+    return { headers, rows: data };
+  } catch (e) {
+    throw new Error('Risposta JSON del foglio Google non valida.');
+  }
 }
 
 function parseCsvRows(text){
@@ -361,10 +365,9 @@ async function directSheetFetch(params){
   }
 
   const sheetName = (settings.sheetName || '').trim();
-  const urls = [
-    googleSheetGvizUrl(settings.spreadsheetId, sheetName),
-    googleSheetCsvUrl(settings.spreadsheetId)
-  ];
+  const urls = [];
+  if (sheetName) urls.push(googleSheetGvizUrl(settings.spreadsheetId, sheetName));
+  urls.push(googleSheetCsvUrl(settings.spreadsheetId));
 
   let lastError = null;
 
@@ -430,7 +433,8 @@ async function directSheetFetch(params){
     }
   }
 
-  return { ok:false, error: lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e nome del foglio e assicurati che il foglio sia pubblico.' };
+  const message = lastError ? lastError.message : 'Impossibile leggere il foglio Google. Verifica ID e permessi del foglio e assicurati che sia pubblico.';
+  return { ok:false, error: message };
 }
 
 async function apiGet(params){
