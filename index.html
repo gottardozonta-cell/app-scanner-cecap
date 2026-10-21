@@ -119,8 +119,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'',
-  barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
+const DEFAULTS = { scriptUrl:'', token:'', spreadsheetId:'', sheetName:'', barcodeColumn:'E', nameColumn:'C', descColumn:'F', photoColumn:'P', activeQtyColumn:'K' };
 
 let settings = loadSettings();
 let role = localStorage.getItem('role') || 'MAGAZZINIERE';
@@ -141,15 +140,16 @@ function normalizeSpreadsheetId(value){
 }
 
 function loadSettings(){
-  try{
+  try {
     const parsed = JSON.parse(localStorage.getItem('settings')||'{}');
     const normalized = Object.assign({}, DEFAULTS, parsed);
     if (normalized.spreadsheetId) normalized.spreadsheetId = normalizeSpreadsheetId(normalized.spreadsheetId);
     return normalized;
-  } catch(e){
+  } catch(e) {
     return Object.assign({}, DEFAULTS);
   }
 }
+
 function saveSettings(){ localStorage.setItem('settings', JSON.stringify(settings)); }
 
 function isAppsScriptUrl(url){
@@ -164,7 +164,7 @@ function isAppsScriptUrl(url){
   }
 }
 
-function columnLetterFromIndex(index) {
+function columnLetterFromIndex(index){
   let n = index + 1;
   let letters = '';
   while (n > 0) {
@@ -379,12 +379,12 @@ async function apiGet(params){
     return await directSheetFetch(params);
   }
 
-  throw new Error('URL Apps Script mancante oppure ID foglio Google mancante.');
+  throw new Error('Inserisci un link Drive o un ID del foglio Google.');
 }
 
 function loadMeta(){
   if(!settings.spreadsheetId && !settings.scriptUrl){
-    showMsg('Vai in IMPOSTAZIONI e inserisci ID del foglio Google.');
+    showMsg('Vai in IMPOSTAZIONI e inserisci l\'ID del foglio Google o il link Drive.', true);
     return;
   }
   apiGet(Object.assign({action:'meta'}, commonParams()))
